@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Built installers copied here for convenience — not source, not tracked.
+/installers
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

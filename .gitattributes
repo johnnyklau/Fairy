@@ -1,0 +1,5 @@
+# Normalize all text files to LF, both in the repo and on checkout —
+# regardless of the checking-out machine's core.autocrlf setting. Without
+# this, a Windows CI runner checks files out with CRLF, which Prettier
+# (LF by default) then flags as a formatting failure on every file.
+* text=auto eol=lf
