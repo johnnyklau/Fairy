@@ -8,6 +8,20 @@ use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuild
 const SCREEN_EDGE_MARGIN: i32 = 24;
 const HOVER_POLL_INTERVAL: Duration = Duration::from_millis(60);
 
+pub fn apply_autostart(app: &AppHandle, enabled: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+
+    let manager = app.autolaunch();
+    let result = if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    if let Err(err) = result {
+        eprintln!("failed to set autostart to {enabled}: {err}");
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub struct EyeBoundsInput {
     left: f64,
@@ -87,7 +101,9 @@ pub struct MonitorInfo {
 
 #[tauri::command]
 pub fn list_monitors(app: AppHandle) -> Result<Vec<MonitorInfo>, String> {
-    let window = app.get_webview_window("main").ok_or("main window missing")?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or("main window missing")?;
     let monitors = window.available_monitors().map_err(|e| e.to_string())?;
     Ok(monitors
         .iter()
@@ -120,7 +136,10 @@ fn compute_window_position(
         ScreenCorner::TopLeft => (mon_x + margin, mon_y + margin),
         ScreenCorner::TopRight => (mon_x + mon_w - win_w - margin, mon_y + margin),
         ScreenCorner::BottomLeft => (mon_x + margin, mon_y + mon_h - win_h - margin),
-        ScreenCorner::BottomRight => (mon_x + mon_w - win_w - margin, mon_y + mon_h - win_h - margin),
+        ScreenCorner::BottomRight => (
+            mon_x + mon_w - win_w - margin,
+            mon_y + mon_h - win_h - margin,
+        ),
     }
 }
 
@@ -165,25 +184,15 @@ mod tests {
 
     #[test]
     fn top_left_hugs_the_origin_corner() {
-        let (x, y) = compute_window_position(
-            ScreenCorner::TopLeft,
-            (0, 0),
-            (1920, 1080),
-            WINDOW,
-            MARGIN,
-        );
+        let (x, y) =
+            compute_window_position(ScreenCorner::TopLeft, (0, 0), (1920, 1080), WINDOW, MARGIN);
         assert_eq!((x, y), (24, 24));
     }
 
     #[test]
     fn top_right_accounts_for_window_width() {
-        let (x, y) = compute_window_position(
-            ScreenCorner::TopRight,
-            (0, 0),
-            (1920, 1080),
-            WINDOW,
-            MARGIN,
-        );
+        let (x, y) =
+            compute_window_position(ScreenCorner::TopRight, (0, 0), (1920, 1080), WINDOW, MARGIN);
         assert_eq!((x, y), (1920 - 460 - 24, 24));
     }
 
@@ -236,21 +245,13 @@ mod tests {
             WINDOW,
             MARGIN,
         );
-        assert_eq!(
-            (x, y),
-            (-1920 + 1920 - 460 - 24, -200 + 1080 - 220 - 24)
-        );
+        assert_eq!((x, y), (-1920 + 1920 - 460 - 24, -200 + 1080 - 220 - 24));
     }
 
     #[test]
     fn zero_margin_hugs_the_exact_edge() {
-        let (x, y) = compute_window_position(
-            ScreenCorner::TopLeft,
-            (0, 0),
-            (1920, 1080),
-            WINDOW,
-            0,
-        );
+        let (x, y) =
+            compute_window_position(ScreenCorner::TopLeft, (0, 0), (1920, 1080), WINDOW, 0);
         assert_eq!((x, y), (0, 0));
     }
 }
@@ -315,16 +316,5 @@ pub fn close_settings(app: AppHandle) -> Result<(), String> {
         window.hide().map_err(|e| e.to_string())?;
     }
     state::set_settings_open(&app, false);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn set_click_through(app: AppHandle, click_through: bool) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window
-            .set_ignore_cursor_events(click_through)
-            .map_err(|e| e.to_string())?;
-    }
-    state::set_click_through(&app, click_through);
     Ok(())
 }

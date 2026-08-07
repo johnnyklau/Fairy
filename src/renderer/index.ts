@@ -1,7 +1,12 @@
 import { reportEyeBounds } from "../state";
 import type { CompanionState } from "../state/types";
 import { createEyeElement, setEyeGlowHigh } from "./eye";
-import { createPopupElement, hidePopup, setPopupText, showPopup } from "./popup";
+import {
+  createPopupElement,
+  hidePopup,
+  setPopupText,
+  showPopup,
+} from "./popup";
 
 // Flavor text for clicking the eye — fluff/testing aid, not a real reminder.
 // Purely local to the Renderer; doesn't touch backend state.

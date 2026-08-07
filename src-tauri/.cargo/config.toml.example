@@ -1,0 +1,10 @@
+# Copy this to config.toml (same directory) if Cargo's build directory is
+# being corrupted by a file-syncing service (OneDrive, Dropbox, etc.) —
+# symptom: `cargo check`/`cargo build` intermittently fails with something
+# like "output path is not a writable directory". This file is gitignored
+# on purpose: the path below is machine-specific, so it must never be the
+# thing CI or another contributor's machine actually uses (they get
+# Cargo's normal target-dir default instead).
+#
+# [build]
+# target-dir = "C:/Users/<you>/AppData/Local/fairy-cargo-target"

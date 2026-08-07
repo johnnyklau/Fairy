@@ -1,4 +1,4 @@
-use crate::shell::apply_window_position;
+use crate::shell::{apply_autostart, apply_window_position};
 use crate::state::Settings;
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
@@ -8,9 +8,11 @@ const SETTINGS_KEY: &str = "settings";
 const MIN_INTERVAL_MINUTES: u32 = 1;
 const MAX_INTERVAL_MINUTES: u32 = 24 * 60;
 
-/// Clamps numeric fields into a sane range. Applied on every load (not just
+/// Clamps/repairs fields into a sane range. Applied on every load (not just
 /// write) as defense-in-depth — e.g. an `intervalMinutes: 0` that somehow
-/// got persisted would otherwise fire on every 15s scheduler tick forever.
+/// got persisted would otherwise fire on every 15s scheduler tick forever,
+/// and a hand-edited malformed `timeOfDay` would otherwise just silently
+/// never match and never fire again.
 fn sanitize(settings: &mut Settings) {
     settings.water.interval_minutes = settings
         .water
@@ -20,6 +22,9 @@ fn sanitize(settings: &mut Settings) {
         .break_reminder
         .interval_minutes
         .clamp(MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES);
+    if !is_valid_time_of_day(&settings.workout.time_of_day) {
+        settings.workout.time_of_day = Settings::default().workout.time_of_day;
+    }
 }
 
 fn is_valid_time_of_day(value: &str) -> bool {
@@ -91,6 +96,7 @@ pub fn update_settings(app: AppHandle, settings: serde_json::Value) -> Result<Se
     store.save().map_err(|e| e.to_string())?;
 
     apply_window_position(&app, &merged.position);
+    apply_autostart(&app, merged.autostart.enabled);
 
     Ok(merged)
 }
@@ -116,6 +122,24 @@ mod tests {
         assert_eq!(merged.break_reminder.interval_minutes, 50);
         assert_eq!(merged.workout.time_of_day, "18:00");
         assert_eq!(merged.position.corner, ScreenCorner::TopRight);
+        assert!(merged.autostart.enabled);
+    }
+
+    #[test]
+    fn autostart_defaults_to_enabled() {
+        assert!(Settings::default().autostart.enabled);
+    }
+
+    #[test]
+    fn old_settings_json_missing_autostart_key_defaults_to_enabled() {
+        // Same migration-safety guarantee as `position`: a settings.json
+        // written before this field existed must still deserialize, with
+        // autostart defaulting on rather than failing to load entirely.
+        let mut base = serde_json::to_value(Settings::default()).unwrap();
+        base.as_object_mut().unwrap().remove("autostart");
+
+        let merged: Settings = serde_json::from_value(base).unwrap();
+        assert!(merged.autostart.enabled);
     }
 
     #[test]
@@ -155,7 +179,10 @@ mod tests {
         sanitize(&mut settings);
 
         assert_eq!(settings.water.interval_minutes, MIN_INTERVAL_MINUTES);
-        assert_eq!(settings.break_reminder.interval_minutes, MIN_INTERVAL_MINUTES);
+        assert_eq!(
+            settings.break_reminder.interval_minutes,
+            MIN_INTERVAL_MINUTES
+        );
     }
 
     #[test]
@@ -176,6 +203,31 @@ mod tests {
         sanitize(&mut settings);
 
         assert_eq!(settings.water.interval_minutes, 45);
+    }
+
+    #[test]
+    fn sanitize_resets_malformed_time_of_day_to_default() {
+        // A hand-edited settings.json with a broken timeOfDay must self-heal
+        // on load rather than silently never firing forever.
+        let mut settings = Settings::default();
+        settings.workout.time_of_day = "not-a-time".into();
+
+        sanitize(&mut settings);
+
+        assert_eq!(
+            settings.workout.time_of_day,
+            Settings::default().workout.time_of_day
+        );
+    }
+
+    #[test]
+    fn sanitize_leaves_valid_time_of_day_unchanged() {
+        let mut settings = Settings::default();
+        settings.workout.time_of_day = "07:30".into();
+
+        sanitize(&mut settings);
+
+        assert_eq!(settings.workout.time_of_day, "07:30");
     }
 
     #[test]

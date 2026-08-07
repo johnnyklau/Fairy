@@ -108,8 +108,11 @@ fn tick(app: &AppHandle, timers: &Mutex<Timers>) {
 
     if settings.workout.enabled {
         let local_now = Local::now();
-        if should_fire_workout(local_now, &settings.workout.time_of_day, timers.workout_last_date)
-        {
+        if should_fire_workout(
+            local_now,
+            &settings.workout.time_of_day,
+            timers.workout_last_date,
+        ) {
             timers.workout_last_date = Some(local_now.date_naive());
             fire(app, ReminderType::Workout, "Workout time, master.".into());
             return;

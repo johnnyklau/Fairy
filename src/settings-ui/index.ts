@@ -1,4 +1,9 @@
-import { closeSettings, getSettings, listMonitors, updateSettings } from "../state";
+import {
+  closeSettings,
+  getSettings,
+  listMonitors,
+  updateSettings,
+} from "../state";
 import type { Settings } from "../state/types";
 
 export function initSettingsUi(): void {
@@ -37,6 +42,11 @@ export function initSettingsUi(): void {
       </fieldset>
 
       <fieldset>
+        <legend>Startup</legend>
+        <label><input type="checkbox" name="autostartEnabled" /> Launch Fairy when Windows starts</label>
+      </fieldset>
+
+      <fieldset>
         <legend>Position</legend>
         <label>Monitor
           <select name="monitorIndex"></select>
@@ -60,13 +70,9 @@ export function initSettingsUi(): void {
 
   const fields = {
     waterEnabled: form.elements.namedItem("waterEnabled") as HTMLInputElement,
-    waterInterval: form.elements.namedItem(
-      "waterInterval",
-    ) as HTMLInputElement,
+    waterInterval: form.elements.namedItem("waterInterval") as HTMLInputElement,
     breakEnabled: form.elements.namedItem("breakEnabled") as HTMLInputElement,
-    breakInterval: form.elements.namedItem(
-      "breakInterval",
-    ) as HTMLInputElement,
+    breakInterval: form.elements.namedItem("breakInterval") as HTMLInputElement,
     workoutEnabled: form.elements.namedItem(
       "workoutEnabled",
     ) as HTMLInputElement,
@@ -74,9 +80,10 @@ export function initSettingsUi(): void {
     idleBarkEnabled: form.elements.namedItem(
       "idleBarkEnabled",
     ) as HTMLInputElement,
-    monitorIndex: form.elements.namedItem(
-      "monitorIndex",
-    ) as HTMLSelectElement,
+    autostartEnabled: form.elements.namedItem(
+      "autostartEnabled",
+    ) as HTMLInputElement,
+    monitorIndex: form.elements.namedItem("monitorIndex") as HTMLSelectElement,
     corner: form.elements.namedItem("corner") as HTMLSelectElement,
   };
 
@@ -84,12 +91,11 @@ export function initSettingsUi(): void {
     fields.waterEnabled.checked = settings.water.enabled;
     fields.waterInterval.value = String(settings.water.intervalMinutes);
     fields.breakEnabled.checked = settings.breakReminder.enabled;
-    fields.breakInterval.value = String(
-      settings.breakReminder.intervalMinutes,
-    );
+    fields.breakInterval.value = String(settings.breakReminder.intervalMinutes);
     fields.workoutEnabled.checked = settings.workout.enabled;
     fields.workoutTime.value = settings.workout.timeOfDay;
     fields.idleBarkEnabled.checked = settings.idleBark.enabled;
+    fields.autostartEnabled.checked = settings.autostart.enabled;
     fields.corner.value = settings.position.corner;
     fields.monitorIndex.value = String(settings.position.monitorIndex);
   }
@@ -169,6 +175,9 @@ export function initSettingsUi(): void {
   );
   fields.idleBarkEnabled.addEventListener("change", () =>
     handleChange({ idleBark: { enabled: fields.idleBarkEnabled.checked } }),
+  );
+  fields.autostartEnabled.addEventListener("change", () =>
+    handleChange({ autostart: { enabled: fields.autostartEnabled.checked } }),
   );
   fields.monitorIndex.addEventListener("change", () =>
     handleChange({

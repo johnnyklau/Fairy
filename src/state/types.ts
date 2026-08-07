@@ -9,10 +9,7 @@ export interface ActiveReminder {
 export type GlowIntensity = "low" | "high";
 
 export type ScreenCorner =
-  | "top-left"
-  | "top-right"
-  | "bottom-left"
-  | "bottom-right";
+  "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
 export interface CompanionState {
   mode: "idle" | "reminder" | "settingsOpen";
@@ -46,6 +43,9 @@ export interface Settings {
     corner: ScreenCorner;
     monitorIndex: number;
   };
+  autostart: {
+    enabled: boolean;
+  };
 }
 
 export interface MonitorInfo {
@@ -55,18 +55,10 @@ export interface MonitorInfo {
   height: number;
 }
 
-export const DEFAULT_COMPANION_STATE: CompanionState = {
-  mode: "idle",
-  activeReminder: null,
-  eye: { glowIntensity: "low" },
-  window: { clickThrough: true, corner: "top-right" },
-};
-
 export const IpcChannel = {
   getSettings: "get_settings",
   updateSettings: "update_settings",
   stateChanged: "state_changed",
-  setClickThrough: "set_click_through",
   // Not in STATE_SCHEMA.md's IPC table:
   // - closeSettings: lets the Settings UI window close itself (opening
   //   happens tray-side, in Rust, without invoke).

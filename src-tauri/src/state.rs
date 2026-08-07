@@ -126,6 +126,18 @@ impl Default for PositionSettings {
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct AutostartSettings {
+    pub enabled: bool,
+}
+
+impl Default for AutostartSettings {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub water: WaterSettings,
     pub break_reminder: BreakSettings,
@@ -133,6 +145,8 @@ pub struct Settings {
     pub idle_bark: IdleBarkSettings,
     #[serde(default)]
     pub position: PositionSettings,
+    #[serde(default)]
+    pub autostart: AutostartSettings,
 }
 
 impl Default for Settings {
@@ -155,6 +169,7 @@ impl Default for Settings {
                 corner: ScreenCorner::TopRight,
                 monitor_index: 0,
             },
+            autostart: AutostartSettings { enabled: true },
         }
     }
 }
