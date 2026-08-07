@@ -17,7 +17,6 @@ pub fn run() {
     }));
 
     builder
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(state::AppState::default())
         .invoke_handler(tauri::generate_handler![
@@ -26,6 +25,7 @@ pub fn run() {
             shell::set_click_through,
             shell::close_settings,
             shell::list_monitors,
+            shell::report_eye_bounds,
             state::get_state,
         ])
         .setup(|app| {

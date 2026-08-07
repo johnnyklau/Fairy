@@ -95,7 +95,15 @@ export function initSettingsUi(): void {
   }
 
   function handleChange(patch: Partial<Settings>): void {
-    void updateSettings(patch).then(applySettings);
+    void updateSettings(patch)
+      .then(applySettings)
+      .catch((error: unknown) => {
+        // Rejected (e.g. invalid workout time) — re-sync the form to
+        // what's actually persisted rather than leaving a stale/unsaved
+        // value displayed.
+        console.error("updateSettings failed:", error);
+        void getSettings().then(applySettings);
+      });
   }
 
   async function populateMonitors(): Promise<void> {

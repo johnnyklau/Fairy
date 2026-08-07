@@ -73,7 +73,10 @@ export const IpcChannel = {
   // - listMonitors: populates the position picker.
   // - getState: fetches a CompanionState snapshot on load, since an emit
   //   sent before the frontend's listener attaches would otherwise be lost.
+  // - reportEyeBounds: gives Shell the eye's real rendered position, so
+  //   hover/click-through hit-testing never hardcodes CSS layout values.
   closeSettings: "close_settings",
   listMonitors: "list_monitors",
   getState: "get_state",
+  reportEyeBounds: "report_eye_bounds",
 } as const;

@@ -1,3 +1,4 @@
+import { reportEyeBounds } from "../state";
 import type { CompanionState } from "../state/types";
 import { createEyeElement, setEyeGlowHigh } from "./eye";
 import { createPopupElement, hidePopup, setPopupText, showPopup } from "./popup";
@@ -48,6 +49,17 @@ export function initRenderer(): void {
     clearTimeout(flavorTimeout);
     flavorTimeout = setTimeout(() => hidePopup(popupEl), FLAVOR_DISPLAY_MS);
   });
+
+  reportBounds();
+}
+
+// The only source of truth Shell uses for hover/click-through hit-testing —
+// see report_eye_bounds in src-tauri/src/shell.rs. Re-report whenever
+// layout could have moved the eye (e.g. anchor-right toggling), so a CSS
+// change alone is always reflected, never hardcoded on the Rust side.
+function reportBounds(): void {
+  const rect = eyeWrap.getBoundingClientRect();
+  void reportEyeBounds(rect.left, rect.top, rect.width, rect.height);
 }
 
 export function renderState(state: CompanionState): void {
@@ -57,6 +69,7 @@ export function renderState(state: CompanionState): void {
     state.window.corner === "top-right" ||
     state.window.corner === "bottom-right";
   container.classList.toggle("anchor-right", anchorRight);
+  reportBounds();
 
   setEyeGlowHigh(eyeEl, state.eye.glowIntensity === "high");
 

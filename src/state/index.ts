@@ -34,6 +34,17 @@ export function getState(): Promise<CompanionState> {
   return invoke<CompanionState>(IpcChannel.getState);
 }
 
+export function reportEyeBounds(
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+): Promise<void> {
+  return invoke(IpcChannel.reportEyeBounds, {
+    bounds: { left, top, width, height },
+  });
+}
+
 function onStateChanged(
   callback: (state: CompanionState) => void,
 ): Promise<UnlistenFn> {

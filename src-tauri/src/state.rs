@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum Mode {
     Idle,
@@ -10,7 +10,7 @@ pub enum Mode {
     SettingsOpen,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ReminderType {
     Water,
@@ -19,7 +19,7 @@ pub enum ReminderType {
     IdleBark,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum GlowIntensity {
     Low,
@@ -99,7 +99,7 @@ pub struct IdleBarkSettings {
     pub enabled: bool,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ScreenCorner {
     TopLeft,
@@ -159,14 +159,29 @@ impl Default for Settings {
     }
 }
 
+/// The eye's real, rendered bounding box (CSS logical px, window-relative),
+/// as reported by the Renderer via `report_eye_bounds`. This is the single
+/// source of truth for hover/click-through hit-testing — Shell never
+/// hardcodes CSS layout values, it just trusts what the DOM actually
+/// measured, so a CSS change alone can never desync it.
+#[derive(Clone, Copy)]
+pub struct EyeBounds {
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 pub struct AppState {
     pub companion: Mutex<CompanionState>,
+    pub eye_bounds: Mutex<Option<EyeBounds>>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
             companion: Mutex::new(CompanionState::default()),
+            eye_bounds: Mutex::new(None),
         }
     }
 }
@@ -222,10 +237,15 @@ pub fn set_window_corner(app: &AppHandle, corner: ScreenCorner) {
     emit_state_changed(app, &companion);
 }
 
-pub fn current_corner(app: &AppHandle) -> ScreenCorner {
+pub fn set_eye_bounds(app: &AppHandle, bounds: EyeBounds) {
     let state_handle = app.state::<AppState>();
-    let companion = state_handle.companion.lock().unwrap();
-    companion.window.corner
+    *state_handle.eye_bounds.lock().unwrap() = Some(bounds);
+}
+
+pub fn current_eye_bounds(app: &AppHandle) -> Option<EyeBounds> {
+    let state_handle = app.state::<AppState>();
+    let bounds = state_handle.eye_bounds.lock().unwrap();
+    *bounds
 }
 
 pub fn current_mode(app: &AppHandle) -> Mode {

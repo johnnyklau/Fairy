@@ -6,16 +6,33 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 
 const SCREEN_EDGE_MARGIN: i32 = 24;
-
-// Local (CSS-pixel) bounding box of the eye within the main window. Mirrors
-// `.eye-wrap` / `.companion.anchor-right` in styles.css: the eye sits at the
-// left edge normally, or the right edge when the window is anchored to a
-// right-side screen corner.
-const EYE_LOCAL_TOP: f64 = 50.0;
-const EYE_LOCAL_SIZE: f64 = 120.0;
-const EYE_LOCAL_LEFT_WHEN_LEFT_ANCHORED: f64 = 10.0;
-const EYE_LOCAL_LEFT_WHEN_RIGHT_ANCHORED: f64 = 460.0 - 10.0 - EYE_LOCAL_SIZE;
 const HOVER_POLL_INTERVAL: Duration = Duration::from_millis(60);
+
+#[derive(serde::Deserialize)]
+pub struct EyeBoundsInput {
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+}
+
+/// Renderer calls this after every layout-affecting render (mount, corner
+/// change) with `eyeWrap.getBoundingClientRect()`. This is the only source
+/// of truth for where the eye actually is — Shell never hardcodes CSS
+/// layout values, so a `.eye-wrap` style change alone can't desync hover
+/// detection from reality.
+#[tauri::command]
+pub fn report_eye_bounds(app: AppHandle, bounds: EyeBoundsInput) {
+    state::set_eye_bounds(
+        &app,
+        state::EyeBounds {
+            left: bounds.left,
+            top: bounds.top,
+            width: bounds.width,
+            height: bounds.height,
+        },
+    );
+}
 
 // `set_ignore_cursor_events(true)` blocks ALL mouse input to the webview,
 // including the mouseenter event that would otherwise ask to turn it back
@@ -31,30 +48,24 @@ pub fn start_hover_watcher(app: AppHandle) {
             let Some(window) = app.get_webview_window("main") else {
                 continue;
             };
+            let Some(eye) = state::current_eye_bounds(&app) else {
+                continue;
+            };
             let (Ok(cursor), Ok(win_pos)) = (window.cursor_position(), window.outer_position())
             else {
                 continue;
             };
             let scale = window.scale_factor().unwrap_or(1.0);
 
-            let anchor_right = matches!(
-                state::current_corner(&app),
-                ScreenCorner::TopRight | ScreenCorner::BottomRight
-            );
-            let eye_local_left = if anchor_right {
-                EYE_LOCAL_LEFT_WHEN_RIGHT_ANCHORED
-            } else {
-                EYE_LOCAL_LEFT_WHEN_LEFT_ANCHORED
-            };
-
-            let eye_left = win_pos.x as f64 + eye_local_left * scale;
-            let eye_top = win_pos.y as f64 + EYE_LOCAL_TOP * scale;
-            let eye_size = EYE_LOCAL_SIZE * scale;
+            let eye_left = win_pos.x as f64 + eye.left * scale;
+            let eye_top = win_pos.y as f64 + eye.top * scale;
+            let eye_width = eye.width * scale;
+            let eye_height = eye.height * scale;
 
             let inside = cursor.x >= eye_left
-                && cursor.x <= eye_left + eye_size
+                && cursor.x <= eye_left + eye_width
                 && cursor.y >= eye_top
-                && cursor.y <= eye_top + eye_size;
+                && cursor.y <= eye_top + eye_height;
 
             if inside != hovering {
                 hovering = inside;
@@ -90,6 +101,29 @@ pub fn list_monitors(app: AppHandle) -> Result<Vec<MonitorInfo>, String> {
         .collect())
 }
 
+/// Pure corner → screen-pixel math, isolated from the live `Window`/
+/// `Monitor` API so it can be unit tested directly — including multi-monitor
+/// setups where a monitor's origin can be negative (e.g. a monitor placed
+/// to the left of or above the primary one).
+fn compute_window_position(
+    corner: ScreenCorner,
+    monitor_pos: (i32, i32),
+    monitor_size: (u32, u32),
+    window_size: (u32, u32),
+    margin: i32,
+) -> (i32, i32) {
+    let (mon_x, mon_y) = monitor_pos;
+    let (mon_w, mon_h) = (monitor_size.0 as i32, monitor_size.1 as i32);
+    let (win_w, win_h) = (window_size.0 as i32, window_size.1 as i32);
+
+    match corner {
+        ScreenCorner::TopLeft => (mon_x + margin, mon_y + margin),
+        ScreenCorner::TopRight => (mon_x + mon_w - win_w - margin, mon_y + margin),
+        ScreenCorner::BottomLeft => (mon_x + margin, mon_y + mon_h - win_h - margin),
+        ScreenCorner::BottomRight => (mon_x + mon_w - win_w - margin, mon_y + mon_h - win_h - margin),
+    }
+}
+
 pub fn apply_window_position(app: &AppHandle, position: &PositionSettings) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -110,24 +144,115 @@ pub fn apply_window_position(app: &AppHandle, position: &PositionSettings) {
     let mon_pos = monitor.position();
     let mon_size = monitor.size();
 
-    let (x, y) = match position.corner {
-        ScreenCorner::TopLeft => (mon_pos.x + SCREEN_EDGE_MARGIN, mon_pos.y + SCREEN_EDGE_MARGIN),
-        ScreenCorner::TopRight => (
-            mon_pos.x + mon_size.width as i32 - win_size.width as i32 - SCREEN_EDGE_MARGIN,
-            mon_pos.y + SCREEN_EDGE_MARGIN,
-        ),
-        ScreenCorner::BottomLeft => (
-            mon_pos.x + SCREEN_EDGE_MARGIN,
-            mon_pos.y + mon_size.height as i32 - win_size.height as i32 - SCREEN_EDGE_MARGIN,
-        ),
-        ScreenCorner::BottomRight => (
-            mon_pos.x + mon_size.width as i32 - win_size.width as i32 - SCREEN_EDGE_MARGIN,
-            mon_pos.y + mon_size.height as i32 - win_size.height as i32 - SCREEN_EDGE_MARGIN,
-        ),
-    };
+    let (x, y) = compute_window_position(
+        position.corner,
+        (mon_pos.x, mon_pos.y),
+        (mon_size.width, mon_size.height),
+        (win_size.width, win_size.height),
+        SCREEN_EDGE_MARGIN,
+    );
 
     let _ = window.set_position(PhysicalPosition::new(x, y));
     state::set_window_corner(app, position.corner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WINDOW: (u32, u32) = (460, 220);
+    const MARGIN: i32 = 24;
+
+    #[test]
+    fn top_left_hugs_the_origin_corner() {
+        let (x, y) = compute_window_position(
+            ScreenCorner::TopLeft,
+            (0, 0),
+            (1920, 1080),
+            WINDOW,
+            MARGIN,
+        );
+        assert_eq!((x, y), (24, 24));
+    }
+
+    #[test]
+    fn top_right_accounts_for_window_width() {
+        let (x, y) = compute_window_position(
+            ScreenCorner::TopRight,
+            (0, 0),
+            (1920, 1080),
+            WINDOW,
+            MARGIN,
+        );
+        assert_eq!((x, y), (1920 - 460 - 24, 24));
+    }
+
+    #[test]
+    fn bottom_left_accounts_for_window_height() {
+        let (x, y) = compute_window_position(
+            ScreenCorner::BottomLeft,
+            (0, 0),
+            (1920, 1080),
+            WINDOW,
+            MARGIN,
+        );
+        assert_eq!((x, y), (24, 1080 - 220 - 24));
+    }
+
+    #[test]
+    fn bottom_right_accounts_for_both_dimensions() {
+        let (x, y) = compute_window_position(
+            ScreenCorner::BottomRight,
+            (0, 0),
+            (1920, 1080),
+            WINDOW,
+            MARGIN,
+        );
+        assert_eq!((x, y), (1920 - 460 - 24, 1080 - 220 - 24));
+    }
+
+    #[test]
+    fn secondary_monitor_with_negative_origin() {
+        // A monitor placed to the left of and above the primary monitor
+        // (e.g. Windows' "arrange displays" with a monitor at top-left of
+        // a multi-monitor layout) has a negative origin. The math must
+        // stay relative to that monitor's own origin, not (0, 0).
+        let (x, y) = compute_window_position(
+            ScreenCorner::TopRight,
+            (-1920, -200),
+            (1920, 1080),
+            WINDOW,
+            MARGIN,
+        );
+        assert_eq!((x, y), (-1920 + 1920 - 460 - 24, -200 + 24));
+    }
+
+    #[test]
+    fn secondary_monitor_bottom_right_with_negative_origin() {
+        let (x, y) = compute_window_position(
+            ScreenCorner::BottomRight,
+            (-1920, -200),
+            (1920, 1080),
+            WINDOW,
+            MARGIN,
+        );
+        assert_eq!(
+            (x, y),
+            (-1920 + 1920 - 460 - 24, -200 + 1080 - 220 - 24)
+        );
+    }
+
+    #[test]
+    fn zero_margin_hugs_the_exact_edge() {
+        let (x, y) = compute_window_position(
+            ScreenCorner::TopLeft,
+            (0, 0),
+            (1920, 1080),
+            WINDOW,
+            0,
+        );
+        assert_eq!((x, y), (0, 0));
+    }
 }
 
 pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
