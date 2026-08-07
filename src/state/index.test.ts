@@ -19,10 +19,6 @@ const sampleState: CompanionState = {
   window: { clickThrough: true, corner: "top-right" },
 };
 
-function flush(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe("state/initState", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -37,10 +33,11 @@ describe("state/initState", () => {
     const { initState } = await import("./index");
     const onChange = vi.fn();
     initState(onChange);
-    await flush();
 
+    await vi.waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith(sampleState);
+    });
     expect(invokeMock).toHaveBeenCalledWith("get_state");
-    expect(onChange).toHaveBeenCalledWith(sampleState);
   });
 
   it("subscribes to state_changed and forwards future events to onChange", async () => {
@@ -57,12 +54,13 @@ describe("state/initState", () => {
     const { initState } = await import("./index");
     const onChange = vi.fn();
     initState(onChange);
-    await flush();
 
-    expect(listenMock).toHaveBeenCalledWith(
-      "state_changed",
-      expect.any(Function),
-    );
+    await vi.waitFor(() => {
+      expect(listenMock).toHaveBeenCalledWith(
+        "state_changed",
+        expect.any(Function),
+      );
+    });
 
     const updated: CompanionState = {
       ...sampleState,
@@ -83,8 +81,9 @@ describe("state/initState", () => {
     const { initState } = await import("./index");
     const onChange = vi.fn();
     initState(onChange);
-    await flush();
 
-    expect(listenMock).toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
   });
 });

@@ -26,10 +26,6 @@ vi.mock("../state", () => ({
   closeSettings: (...args: unknown[]) => closeSettingsMock(...args),
 }));
 
-function flush(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe("settings-ui", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -43,7 +39,19 @@ describe("settings-ui", () => {
   async function setup() {
     const { initSettingsUi } = await import("./index");
     initSettingsUi();
-    await flush();
+    // Wait for the populateMonitors().then(() => getSettings().then(applySettings))
+    // chain to actually settle, rather than gambling on a fixed number of
+    // flushed microtask/macrotask ticks being "enough" (timing-fragile
+    // across environments/runners).
+    await vi.waitFor(() => {
+      expect(
+        document.querySelector<HTMLInputElement>('[name="waterEnabled"]')
+          ?.checked,
+      ).toBe(defaultSettings.water.enabled);
+      expect(
+        document.querySelectorAll('[name="monitorIndex"] option'),
+      ).toHaveLength(defaultMonitors.length);
+    });
   }
 
   it("populates form fields from fetched settings", async () => {
@@ -145,10 +153,11 @@ describe("settings-ui", () => {
       )!;
       workoutTime.value = "bad-value";
       workoutTime.dispatchEvent(new Event("change"));
-      await flush();
 
       // Once on initial load, once more to re-sync after the rejection.
-      expect(getSettingsMock).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => {
+        expect(getSettingsMock).toHaveBeenCalledTimes(2);
+      });
     });
   });
 
