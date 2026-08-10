@@ -1,5 +1,7 @@
+use crate::dialogues::{self, Line};
 use crate::settings::load_settings;
-use crate::state::{self, Mode, ReminderType};
+use crate::state::{self, Mode, ReminderType, Settings};
+use crate::voice;
 use chrono::Local;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -25,21 +27,16 @@ impl Default for Timers {
 }
 
 const TICK: Duration = Duration::from_secs(15);
-const REMINDER_DISPLAY: Duration = Duration::from_secs(5);
+const REMINDER_DISPLAY: Duration = Duration::from_secs(10);
 const IDLE_BARK_MIN_GAP: Duration = Duration::from_secs(45 * 60);
-
-const IDLE_BARK_LINES: &[&str] = &[
-    "Just checking in, master.",
-    "Don't forget I'm here, master.",
-    "It's quiet today, master.",
-];
+const AUDIO_TAIL_BUFFER: Duration = Duration::from_millis(500);
 
 pub fn start_scheduler(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let timers = Mutex::new(Timers::default());
         loop {
             tokio::time::sleep(TICK).await;
-            tick(&app, &timers);
+            tick(&app, &timers).await;
         }
     });
 }
@@ -65,14 +62,36 @@ fn should_fire_workout(
     matches_time && !already_fired_today
 }
 
-fn tick(app: &AppHandle, timers: &Mutex<Timers>) {
-    if state::current_mode(app) != Mode::Idle {
-        return;
+/// The final display duration for a reminder popup: at least the fixed
+/// `REMINDER_DISPLAY` window, or long enough to cover the attached audio
+/// clip plus a trailing buffer, whichever is longer — so voice, once
+/// enabled, never gets cut off mid-sentence. `None` (voice off, synthesis
+/// failed, or timed out) always yields `fixed`, unchanged from pre-voice
+/// behavior.
+fn dismiss_duration(fixed: Duration, clip_duration_ms: Option<u32>) -> Duration {
+    match clip_duration_ms {
+        Some(ms) => fixed.max(Duration::from_millis(ms as u64) + AUDIO_TAIL_BUFFER),
+        None => fixed,
     }
+}
 
-    let settings = load_settings(app);
+enum Decision {
+    Reminder {
+        kind: ReminderType,
+        line: &'static Line,
+    },
+    IdleBark {
+        line: &'static Line,
+    },
+}
+
+/// Which single reminder (if any) should fire this tick, and updates the
+/// relevant timer. Kept synchronous and separate from `fire()` so the
+/// `Timers` lock is always released before any `.await` point — a
+/// `MutexGuard` held across an await is both a footgun and, for the
+/// std `Mutex` used here, not `Send`-safe to hold that way.
+fn decide(settings: &Settings, timers: &Mutex<Timers>, now: Instant) -> Option<Decision> {
     let mut timers = timers.lock().unwrap();
-    let now = Instant::now();
 
     if settings.water.enabled
         && elapsed_at_least(
@@ -82,12 +101,10 @@ fn tick(app: &AppHandle, timers: &Mutex<Timers>) {
         )
     {
         timers.water_last = now;
-        fire(
-            app,
-            ReminderType::Water,
-            "Time to drink some water, master.".into(),
-        );
-        return;
+        return Some(Decision::Reminder {
+            kind: ReminderType::Water,
+            line: dialogues::pick(dialogues::WATER_LINES),
+        });
     }
 
     if settings.break_reminder.enabled
@@ -98,12 +115,10 @@ fn tick(app: &AppHandle, timers: &Mutex<Timers>) {
         )
     {
         timers.break_last = now;
-        fire(
-            app,
-            ReminderType::Break,
-            "Stand up and stretch for 5, master.".into(),
-        );
-        return;
+        return Some(Decision::Reminder {
+            kind: ReminderType::Break,
+            line: dialogues::pick(dialogues::BREAK_LINES),
+        });
     }
 
     if settings.workout.enabled {
@@ -114,26 +129,76 @@ fn tick(app: &AppHandle, timers: &Mutex<Timers>) {
             timers.workout_last_date,
         ) {
             timers.workout_last_date = Some(local_now.date_naive());
-            fire(app, ReminderType::Workout, "Workout time, master.".into());
-            return;
+            return Some(Decision::Reminder {
+                kind: ReminderType::Workout,
+                line: dialogues::pick(dialogues::WORKOUT_LINES),
+            });
         }
     }
 
     if settings.idle_bark.enabled && elapsed_at_least(now, timers.idle_bark_last, IDLE_BARK_MIN_GAP)
     {
         timers.idle_bark_last = now;
-        let index = (chrono::Utc::now().timestamp() as usize) % IDLE_BARK_LINES.len();
-        fire(app, ReminderType::IdleBark, IDLE_BARK_LINES[index].into());
+        return Some(Decision::IdleBark {
+            line: dialogues::pick(dialogues::IDLE_BARK_LINES),
+        });
+    }
+
+    None
+}
+
+async fn tick(app: &AppHandle, timers: &Mutex<Timers>) {
+    if state::current_mode(app) != Mode::Idle {
+        return;
+    }
+
+    let settings = load_settings(app);
+    let now = Instant::now();
+
+    match decide(&settings, timers, now) {
+        Some(Decision::Reminder { kind, line }) => {
+            show_reminder(app, kind, line, &settings).await;
+        }
+        Some(Decision::IdleBark { line }) => {
+            show_reminder(app, ReminderType::IdleBark, line, &settings).await;
+        }
+        None => {}
     }
 }
 
-fn fire(app: &AppHandle, kind: ReminderType, message: String) {
+/// Synthesizes (if voice is enabled), attaches audio to the reminder, and
+/// schedules its dismissal. `line.en` is always what's displayed;
+/// `line.for_language(settings.voice.language)` is what gets spoken — see
+/// VOICE_SPEC.md "Scope decisions": display never localizes, only audio
+/// does. Pairing both in one `Line` means there's no separate index to
+/// keep in sync between the two.
+async fn show_reminder(
+    app: &AppHandle,
+    kind: ReminderType,
+    line: &'static Line,
+    settings: &Settings,
+) {
     let triggered_at = chrono::Utc::now().timestamp_millis();
-    state::set_reminder(app, kind, message, triggered_at);
+
+    let audio = if settings.voice.enabled {
+        voice::synthesize(
+            app,
+            line.for_language(settings.voice.language),
+            settings.voice.language,
+            settings.voice.volume,
+        )
+        .await
+    } else {
+        None
+    };
+
+    let dismiss_after = dismiss_duration(REMINDER_DISPLAY, audio.as_ref().map(|a| a.duration_ms));
+
+    state::set_reminder(app, kind, line.en.to_string(), triggered_at, audio);
 
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(REMINDER_DISPLAY).await;
+        tokio::time::sleep(dismiss_after).await;
         if state::current_mode(&app_clone) == Mode::Reminder {
             state::set_mode_idle(&app_clone);
         }
@@ -194,5 +259,41 @@ mod tests {
         let yesterday = local_dt(2026, 8, 5, 18, 0).date_naive();
         let now = local_dt(2026, 8, 6, 18, 0);
         assert!(should_fire_workout(now, "18:00", Some(yesterday)));
+    }
+
+    #[test]
+    fn dismiss_duration_uses_fixed_window_when_no_audio() {
+        assert_eq!(dismiss_duration(REMINDER_DISPLAY, None), REMINDER_DISPLAY);
+    }
+
+    #[test]
+    fn dismiss_duration_uses_fixed_window_when_clip_is_shorter() {
+        // A 1s clip + 500ms buffer (1.5s) is still shorter than the fixed
+        // window, so the fixed window wins.
+        assert_eq!(
+            dismiss_duration(REMINDER_DISPLAY, Some(1000)),
+            REMINDER_DISPLAY
+        );
+    }
+
+    #[test]
+    fn dismiss_duration_extends_past_fixed_window_for_long_clips() {
+        // A clip long enough that clip + 500ms buffer exceeds the fixed
+        // window, regardless of REMINDER_DISPLAY's current value.
+        let clip_ms = REMINDER_DISPLAY.as_millis() as u32 + 2000;
+        let result = dismiss_duration(REMINDER_DISPLAY, Some(clip_ms));
+        assert_eq!(result, Duration::from_millis((clip_ms + 500) as u64));
+    }
+
+    #[test]
+    fn dismiss_duration_at_exact_boundary_prefers_fixed() {
+        // Clip + buffer exactly equal to the fixed window: `max` picks
+        // either (they're equal), asserting on the value not the branch.
+        let clip_plus_buffer_eq_fixed = REMINDER_DISPLAY - AUDIO_TAIL_BUFFER;
+        let result = dismiss_duration(
+            REMINDER_DISPLAY,
+            Some(clip_plus_buffer_eq_fixed.as_millis() as u32),
+        );
+        assert_eq!(result, REMINDER_DISPLAY);
     }
 }

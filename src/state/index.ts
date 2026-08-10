@@ -4,6 +4,7 @@ import {
   type CompanionState,
   IpcChannel,
   type MonitorInfo,
+  type ReminderAudio,
   type Settings,
 } from "./types";
 
@@ -38,6 +39,22 @@ export function reportEyeBounds(
   return invoke(IpcChannel.reportEyeBounds, {
     bounds: { left, top, width, height },
   });
+}
+
+export function synthesizeFlavorLine(
+  index: number,
+): Promise<ReminderAudio | null> {
+  return invoke<ReminderAudio | null>(IpcChannel.synthesizeFlavorLine, {
+    index,
+  });
+}
+
+export function getFlavorLines(): Promise<string[]> {
+  return invoke<string[]>(IpcChannel.getFlavorLines);
+}
+
+export function setFlavorPopupVisible(visible: boolean): Promise<void> {
+  return invoke(IpcChannel.setFlavorPopupVisible, { visible });
 }
 
 function onStateChanged(

@@ -1,9 +1,15 @@
 export type ReminderType = "water" | "break" | "workout" | "idleBark";
 
+export interface ReminderAudio {
+  base64Wav: string;
+  durationMs: number;
+}
+
 export interface ActiveReminder {
   type: ReminderType;
   message: string;
   triggeredAt: number;
+  audio?: ReminderAudio;
 }
 
 export type GlowIntensity = "low" | "high";
@@ -46,6 +52,11 @@ export interface Settings {
   autostart: {
     enabled: boolean;
   };
+  voice: {
+    enabled: boolean;
+    language: "en" | "ja";
+    volume: number;
+  };
 }
 
 export interface MonitorInfo {
@@ -67,8 +78,23 @@ export const IpcChannel = {
   //   sent before the frontend's listener attaches would otherwise be lost.
   // - reportEyeBounds: gives Shell the eye's real rendered position, so
   //   hover/click-through hit-testing never hardcodes CSS layout values.
+  // - synthesizeFlavorLine: voices an eye-click flavor line on demand —
+  //   these are picked client-side and never touch CompanionState, so they
+  //   can't ride along on the reminder pipeline's audio. See
+  //   docs/VOICE_SPEC.md "Flavor-line voicing".
+  // - getFlavorLines: fetches the canonical English flavor-line text once
+  //   at startup (src-tauri/src/dialogues.rs is the source of truth) so
+  //   the Renderer can keep picking/displaying locally afterward, same
+  //   instant click response as before.
+  // - setFlavorPopupVisible: tells Shell's hover watcher a flavor popup is
+  //   on screen, so it won't re-engage click-through (and inadvertently
+  //   make the popup vanish) until it's dismissed. Reminders don't need
+  //   this — Shell already tracks Mode::Reminder itself.
   closeSettings: "close_settings",
   listMonitors: "list_monitors",
   getState: "get_state",
   reportEyeBounds: "report_eye_bounds",
+  synthesizeFlavorLine: "synthesize_flavor_line",
+  getFlavorLines: "get_flavor_lines",
+  setFlavorPopupVisible: "set_flavor_popup_visible",
 } as const;

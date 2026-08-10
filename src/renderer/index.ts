@@ -1,5 +1,11 @@
-import { reportEyeBounds } from "../state";
+import {
+  getFlavorLines,
+  reportEyeBounds,
+  setFlavorPopupVisible,
+  synthesizeFlavorLine,
+} from "../state";
 import type { CompanionState } from "../state/types";
+import { playBase64Wav } from "./audio";
 import { createEyeElement, setEyeGlowHigh } from "./eye";
 import {
   createPopupElement,
@@ -8,16 +14,13 @@ import {
   showPopup,
 } from "./popup";
 
-// Flavor text for clicking the eye — fluff/testing aid, not a real reminder.
-// Purely local to the Renderer; doesn't touch backend state.
-const FLAVOR_LINES = [
-  "Yes, master?",
-  "I'm right here, master.",
-  "Did you need something, master?",
-  "Boop.",
-  "...watching you work, master.",
-];
-const FLAVOR_DISPLAY_MS = 4000;
+// Floor for text-only display (voice off, or synthesis failed/disabled) —
+// generous enough to comfortably read any current flavor line without
+// timing it precisely to length.
+const FLAVOR_DISPLAY_MS = 6500;
+// Mirrors Behavior's AUDIO_TAIL_BUFFER in src-tauri/src/behavior.rs — keep
+// both in sync if either changes.
+const AUDIO_TAIL_BUFFER_MS = 500;
 
 let mounted = false;
 let container: HTMLDivElement;
@@ -25,6 +28,12 @@ let eyeWrap: HTMLDivElement;
 let eyeEl: SVGSVGElement;
 let popupEl: HTMLDivElement;
 let flavorTimeout: ReturnType<typeof setTimeout> | undefined;
+let lastPlayedReminderAt: number | null = null;
+// Fetched once at startup from src-tauri/src/dialogues.rs (the single
+// source of truth for dialogue content) via getFlavorLines, then picked
+// from locally on every click — same instant response as a hardcoded
+// array, just sourced from the backend instead of duplicated here.
+let flavorLines: string[] = [];
 
 export function initRenderer(): void {
   if (mounted) return;
@@ -48,14 +57,51 @@ export function initRenderer(): void {
   root.appendChild(container);
 
   eyeWrap.addEventListener("click", () => {
-    const line = FLAVOR_LINES[Math.floor(Math.random() * FLAVOR_LINES.length)];
-    setPopupText(popupEl, line);
-    showPopup(popupEl);
-    clearTimeout(flavorTimeout);
-    flavorTimeout = setTimeout(() => hidePopup(popupEl), FLAVOR_DISPLAY_MS);
+    void handleFlavorClick();
+  });
+
+  void getFlavorLines().then((lines) => {
+    flavorLines = lines;
   });
 
   reportBounds();
+}
+
+// Waits for voiced audio (if voice is enabled) before showing the popup —
+// mirrors the "popup waits for audio" choice made for reminders, so a
+// click never shows English text while Japanese audio trails in half a
+// second later out of sync. When voice is disabled, synthesizeFlavorLine
+// resolves to null via one cheap IPC round-trip, not a synthesis wait.
+async function handleFlavorClick(): Promise<void> {
+  if (flavorLines.length === 0) return; // not fetched yet — click is a no-op
+  const index = Math.floor(Math.random() * flavorLines.length);
+  const line = flavorLines[index];
+  const audio = await synthesizeFlavorLine(index).catch(() => null);
+
+  setPopupText(popupEl, line);
+  showPopup(popupEl);
+  void setFlavorPopupVisible(true);
+
+  const hide = () => {
+    hidePopup(popupEl);
+    void setFlavorPopupVisible(false);
+  };
+
+  clearTimeout(flavorTimeout);
+  if (audio) {
+    // duration_ms is an estimate up front — this timer is just a safety
+    // net (e.g. if playback fails to start silently). The real dismissal
+    // below fires off the audio element's actual `ended` event, so the
+    // popup always lasts exactly until the dialogue finishes playing.
+    const fallbackMs = audio.durationMs + AUDIO_TAIL_BUFFER_MS;
+    flavorTimeout = setTimeout(hide, fallbackMs);
+    playBase64Wav(audio.base64Wav, () => {
+      clearTimeout(flavorTimeout);
+      flavorTimeout = setTimeout(hide, AUDIO_TAIL_BUFFER_MS);
+    });
+  } else {
+    flavorTimeout = setTimeout(hide, FLAVOR_DISPLAY_MS);
+  }
 }
 
 // The only source of truth Shell uses for hover/click-through hit-testing —
@@ -81,6 +127,16 @@ export function renderState(state: CompanionState): void {
   if (state.activeReminder) {
     setPopupText(popupEl, state.activeReminder.message);
     showPopup(popupEl);
+    // renderState can be called repeatedly for the same active reminder
+    // (e.g. a corner change re-render) — only play audio once per
+    // reminder, keyed by triggeredAt, not on every call.
+    if (
+      state.activeReminder.audio &&
+      state.activeReminder.triggeredAt !== lastPlayedReminderAt
+    ) {
+      lastPlayedReminderAt = state.activeReminder.triggeredAt;
+      playBase64Wav(state.activeReminder.audio.base64Wav);
+    }
   } else {
     hidePopup(popupEl);
   }

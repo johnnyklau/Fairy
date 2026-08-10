@@ -32,6 +32,15 @@ pub struct ActiveReminder {
     pub kind: ReminderType,
     pub message: String,
     pub triggered_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio: Option<ReminderAudio>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReminderAudio {
+    pub base64_wav: String,
+    pub duration_ms: u32,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -136,6 +145,41 @@ impl Default for AutostartSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum VoiceLanguage {
+    En,
+    Ja,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceSettings {
+    pub enabled: bool,
+    pub language: VoiceLanguage,
+    // Field-level default (not just the struct-level one on `Settings.voice`)
+    // because real settings.json files already exist with a `voice` object
+    // that predates this field — without this, deserializing an existing
+    // `voice: { enabled, language }` (no `volume`) would fail entirely and
+    // fall back to resetting ALL settings to default, not just voice.
+    #[serde(default = "default_voice_volume")]
+    pub volume: f32,
+}
+
+fn default_voice_volume() -> f32 {
+    0.5
+}
+
+impl Default for VoiceSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            language: VoiceLanguage::En,
+            volume: default_voice_volume(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -147,6 +191,8 @@ pub struct Settings {
     pub position: PositionSettings,
     #[serde(default)]
     pub autostart: AutostartSettings,
+    #[serde(default)]
+    pub voice: VoiceSettings,
 }
 
 impl Default for Settings {
@@ -170,6 +216,7 @@ impl Default for Settings {
                 monitor_index: 0,
             },
             autostart: AutostartSettings { enabled: true },
+            voice: VoiceSettings::default(),
         }
     }
 }
@@ -190,6 +237,15 @@ pub struct EyeBounds {
 pub struct AppState {
     pub companion: Mutex<CompanionState>,
     pub eye_bounds: Mutex<Option<EyeBounds>>,
+    /// Whether the Renderer currently has a flavor-line popup on screen.
+    /// Flavor lines never touch `CompanionState`/`Mode` by design (picked
+    /// and shown entirely client-side, for an instant click response —
+    /// see `voice.rs`'s `synthesize_flavor_line`), so this is the one
+    /// piece of Renderer-local UI state Shell needs visibility into: the
+    /// hover watcher must not re-enable click-through while a flavor
+    /// popup is showing, same as it already avoids doing so during
+    /// `Mode::Reminder`.
+    pub flavor_popup_visible: Mutex<bool>,
 }
 
 impl Default for AppState {
@@ -197,6 +253,7 @@ impl Default for AppState {
         Self {
             companion: Mutex::new(CompanionState::default()),
             eye_bounds: Mutex::new(None),
+            flavor_popup_visible: Mutex::new(false),
         }
     }
 }
@@ -214,7 +271,13 @@ pub fn set_mode_idle(app: &AppHandle) {
     emit_state_changed(app, &companion);
 }
 
-pub fn set_reminder(app: &AppHandle, kind: ReminderType, message: String, triggered_at: i64) {
+pub fn set_reminder(
+    app: &AppHandle,
+    kind: ReminderType,
+    message: String,
+    triggered_at: i64,
+    audio: Option<ReminderAudio>,
+) {
     let state_handle = app.state::<AppState>();
     let mut companion = state_handle.companion.lock().unwrap();
     companion.mode = Mode::Reminder;
@@ -222,6 +285,7 @@ pub fn set_reminder(app: &AppHandle, kind: ReminderType, message: String, trigge
         kind,
         message,
         triggered_at,
+        audio,
     });
     companion.eye.glow_intensity = GlowIntensity::High;
     emit_state_changed(app, &companion);
@@ -267,6 +331,20 @@ pub fn current_mode(app: &AppHandle) -> Mode {
     let state_handle = app.state::<AppState>();
     let companion = state_handle.companion.lock().unwrap();
     companion.mode
+}
+
+pub fn set_flavor_popup_visible(app: &AppHandle, visible: bool) {
+    let state_handle = app.state::<AppState>();
+    *state_handle.flavor_popup_visible.lock().unwrap() = visible;
+}
+
+/// True while either a reminder popup (`Mode::Reminder`) or a flavor-line
+/// popup is on screen — the hover watcher in `shell.rs` checks this before
+/// re-engaging click-through, so toggling window styles never happens
+/// while something's actually being shown.
+pub fn is_popup_visible(app: &AppHandle) -> bool {
+    current_mode(app) == Mode::Reminder
+        || *app.state::<AppState>().flavor_popup_visible.lock().unwrap()
 }
 
 #[tauri::command]

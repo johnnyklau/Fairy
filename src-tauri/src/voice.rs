@@ -1,0 +1,813 @@
+use crate::dialogues;
+use crate::state::{ReminderAudio, VoiceLanguage, VoiceSettings};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use sherpa_onnx::{
+    GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsSupertonicModelConfig,
+};
+use std::collections::HashMap;
+use std::f32::consts::PI;
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager};
+
+const SPEAKER_ID: i32 = 0;
+pub const SYNTHESIS_TIMEOUT: Duration = Duration::from_secs(3);
+const PEAK_CEILING: f32 = 0.98;
+
+const MODEL_DIR_NAME: &str = "sherpa-onnx-supertonic-3-tts-int8-2026-05-11";
+const MODEL_ARCHIVE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2";
+// Sourced from GitHub's release API `digest` field for this asset
+// (`GET /repos/k2-fsa/sherpa-onnx/releases/tags/tts-models`), computed by
+// GitHub on upload — not a third-party claim. Re-check this if
+// MODEL_ARCHIVE_URL is ever bumped to a newer dated release.
+const MODEL_ARCHIVE_SHA256: &str =
+    "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427";
+
+const MODEL_FILES: &[&str] = &[
+    "duration_predictor.int8.onnx",
+    "text_encoder.int8.onnx",
+    "vector_estimator.int8.onnx",
+    "vocoder.int8.onnx",
+    "tts.json",
+    "unicode_indexer.bin",
+    "voice.bin",
+];
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgress {
+    downloaded_bytes: u64,
+    total_bytes: u64,
+}
+
+fn lang_code(language: VoiceLanguage) -> &'static str {
+    match language {
+        VoiceLanguage::En => "en",
+        VoiceLanguage::Ja => "ja",
+    }
+}
+
+// ---------- Paths ----------
+
+fn app_data_dir(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_data_dir()
+        .expect("app_data_dir should resolve on desktop platforms")
+}
+
+fn model_dir(app: &AppHandle) -> PathBuf {
+    app_data_dir(app).join("voice_model").join(MODEL_DIR_NAME)
+}
+
+fn cache_dir(app: &AppHandle) -> PathBuf {
+    app_data_dir(app).join("voice_cache")
+}
+
+pub fn is_model_ready(app: &AppHandle) -> bool {
+    let dir = model_dir(app);
+    MODEL_FILES.iter().all(|f| dir.join(f).is_file())
+}
+
+// ---------- Model provisioning ----------
+
+/// Fire-and-forget: kicks off a background download if voice was just
+/// enabled and the model isn't present yet. Mirrors the
+/// `apply_window_position`/`apply_autostart` side-effect pattern already
+/// used from `settings::update_settings`.
+pub fn maybe_start_model_download(app: &AppHandle, voice: &VoiceSettings) {
+    if !voice.enabled || is_model_ready(app) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(err) = download_and_install_model(&app).await {
+            eprintln!("voice model download failed: {err}");
+        }
+    });
+}
+
+/// Fire-and-forget: if the model is already on disk, warm it into memory
+/// now rather than paying that cold-load cost on the first real reminder.
+/// A no-op if the model isn't present yet (that path is instead handled by
+/// `maybe_start_model_download`, and the first synthesis call after a
+/// download completes just lazy-loads normally).
+pub fn maybe_eager_load(app: &AppHandle, voice: &VoiceSettings) {
+    if !voice.enabled || !is_model_ready(app) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_tts_loaded(&app);
+    });
+}
+
+async fn download_and_install_model(app: &AppHandle) -> Result<(), String> {
+    let app_for_blocking = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        download_and_install_model_blocking(&app_for_blocking)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn download_and_install_model_blocking(app: &AppHandle) -> Result<(), String> {
+    let archive_bytes = download_with_progress(app, MODEL_ARCHIVE_URL)?;
+    if !MODEL_ARCHIVE_SHA256.is_empty() {
+        verify_checksum(&archive_bytes, MODEL_ARCHIVE_SHA256)?;
+    }
+    extract_archive(app, &archive_bytes)?;
+    Ok(())
+}
+
+fn download_with_progress(app: &AppHandle, url: &str) -> Result<Vec<u8>, String> {
+    let response = ureq::get(url).call().map_err(|e| e.to_string())?;
+    let total_bytes: u64 = response
+        .header("Content-Length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    let mut reader = response.into_reader();
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 64 * 1024];
+    let mut downloaded: u64 = 0;
+    loop {
+        let n = reader.read(&mut chunk).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        downloaded += n as u64;
+        let _ = app.emit(
+            "voice_model_download_progress",
+            DownloadProgress {
+                downloaded_bytes: downloaded,
+                total_bytes,
+            },
+        );
+    }
+    Ok(buf)
+}
+
+fn verify_checksum(bytes: &[u8], expected_hex: &str) -> Result<(), String> {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let actual = to_hex(&hasher.finalize());
+    if actual.eq_ignore_ascii_case(expected_hex) {
+        Ok(())
+    } else {
+        Err(format!(
+            "model archive checksum mismatch: expected {expected_hex}, got {actual}"
+        ))
+    }
+}
+
+fn extract_archive(app: &AppHandle, archive_bytes: &[u8]) -> Result<(), String> {
+    let decompressed = bzip2::read::BzDecoder::new(archive_bytes);
+    let mut archive = tar::Archive::new(decompressed);
+    let dest = app_data_dir(app).join("voice_model");
+    fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    archive.unpack(&dest).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ---------- Synthesis ----------
+
+static TTS_ENGINE: OnceLock<Mutex<Option<OfflineTts>>> = OnceLock::new();
+static MEM_CACHE: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
+
+fn cache_key(text: &str, language: VoiceLanguage) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(lang_code(language).as_bytes());
+    hasher.update(b":");
+    hasher.update(text.as_bytes());
+    to_hex(&hasher.finalize())
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Synthesize `text` (already resolved to the target language — see the
+/// `*_voice_text` lookups above) as processed WAV audio, or `None` if the
+/// model isn't ready, synthesis fails, or it exceeds `SYNTHESIS_TIMEOUT`.
+/// Behavior is responsible for falling back to a silent reminder on `None`.
+/// `volume` (0.0-1.0, from `settings.voice.volume`) is applied fresh on
+/// every call, after the cache lookup/synthesis — the cache always stores
+/// the canonical (unscaled) processed clip, so moving the volume slider
+/// never invalidates it or forces a re-synthesis.
+pub async fn synthesize(
+    app: &AppHandle,
+    text: &str,
+    language: VoiceLanguage,
+    volume: f32,
+) -> Option<ReminderAudio> {
+    if text.is_empty() || !is_model_ready(app) {
+        return None;
+    }
+
+    let key = cache_key(text, language);
+    let canonical_bytes = if let Some(bytes) = mem_cache_get(&key) {
+        bytes
+    } else if let Some(bytes) = disk_cache_get(app, &key) {
+        mem_cache_put(key.clone(), bytes.clone());
+        bytes
+    } else {
+        let app_for_blocking = app.clone();
+        let text_owned = text.to_string();
+        let handle = tauri::async_runtime::spawn_blocking(move || {
+            synthesize_blocking(&app_for_blocking, &text_owned, language)
+        });
+
+        let bytes = match tokio::time::timeout(SYNTHESIS_TIMEOUT, handle).await {
+            Ok(Ok(Some(bytes))) => bytes,
+            _ => return None,
+        };
+
+        disk_cache_put(app, &key, &bytes);
+        mem_cache_put(key, bytes.clone());
+        bytes
+    };
+
+    let scaled = apply_volume(&canonical_bytes, volume);
+    let duration_ms = read_wav_duration_ms(&scaled).unwrap_or(0);
+    Some(ReminderAudio {
+        base64_wav: BASE64.encode(&scaled),
+        duration_ms,
+    })
+}
+
+fn mem_cache_get(key: &str) -> Option<Vec<u8>> {
+    let cache = MEM_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    cache.lock().ok()?.get(key).cloned()
+}
+
+fn mem_cache_put(key: String, wav_bytes: Vec<u8>) {
+    let cache = MEM_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(key, wav_bytes);
+    }
+}
+
+fn disk_cache_get(app: &AppHandle, key: &str) -> Option<Vec<u8>> {
+    let path = cache_dir(app).join(format!("{key}.wav"));
+    fs::read(path).ok()
+}
+
+fn disk_cache_put(app: &AppHandle, key: &str, wav_bytes: &[u8]) {
+    let dir = cache_dir(app);
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let _ = fs::write(dir.join(format!("{key}.wav")), wav_bytes);
+}
+
+fn build_tts_config(dir: &Path) -> OfflineTtsConfig {
+    let path = |name: &str| Some(dir.join(name).to_string_lossy().into_owned());
+    OfflineTtsConfig {
+        model: sherpa_onnx::OfflineTtsModelConfig {
+            supertonic: OfflineTtsSupertonicModelConfig {
+                duration_predictor: path("duration_predictor.int8.onnx"),
+                text_encoder: path("text_encoder.int8.onnx"),
+                vector_estimator: path("vector_estimator.int8.onnx"),
+                vocoder: path("vocoder.int8.onnx"),
+                tts_json: path("tts.json"),
+                unicode_indexer: path("unicode_indexer.bin"),
+                voice_style: path("voice.bin"),
+            },
+            num_threads: 2,
+            debug: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+fn ensure_tts_loaded(app: &AppHandle) -> bool {
+    let cell = TTS_ENGINE.get_or_init(|| Mutex::new(None));
+    let Ok(mut guard) = cell.lock() else {
+        return false;
+    };
+    if guard.is_some() {
+        return true;
+    }
+    let config = build_tts_config(&model_dir(app));
+    match OfflineTts::create(&config) {
+        Some(tts) => {
+            *guard = Some(tts);
+            true
+        }
+        None => false,
+    }
+}
+
+fn synthesize_blocking(app: &AppHandle, text: &str, language: VoiceLanguage) -> Option<Vec<u8>> {
+    if !ensure_tts_loaded(app) {
+        return None;
+    }
+    let cell = TTS_ENGINE.get()?;
+    let guard = cell.lock().ok()?;
+    let tts = guard.as_ref()?;
+
+    let mut extra = HashMap::new();
+    extra.insert("lang".to_string(), serde_json::json!(lang_code(language)));
+    let gen_config = GenerationConfig {
+        sid: SPEAKER_ID,
+        num_steps: 8,
+        speed: 1.0,
+        extra: Some(extra),
+        ..Default::default()
+    };
+
+    let audio = tts.generate_with_config(text, &gen_config, None::<fn(&[f32], f32) -> bool>)?;
+    let sample_rate = audio.sample_rate() as f32;
+    let mut samples: Vec<f32> = audio.samples().to_vec();
+
+    samples = apply_pitch_shift(&samples, sample_rate, 3.0);
+    apply_distortion(&mut samples, 0.2);
+    apply_bitcrush(&mut samples, 11, 0.24);
+    samples = apply_vibrato(&samples, sample_rate, 0.18, 1.0, 0.10);
+    samples = apply_reverb(&samples, sample_rate, 0.2, 0.19);
+    apply_eq(&mut samples, sample_rate);
+    limit_peaks(&mut samples, PEAK_CEILING);
+
+    Some(write_wav_bytes(&samples, sample_rate as u32))
+}
+
+// ---------- Effects chain (ported from the standalone voice-spike, spike-
+// confirmed by ear on both English and Japanese reminder lines) ----------
+
+fn apply_pitch_shift(samples: &[f32], sample_rate: f32, semitones: f32) -> Vec<f32> {
+    use pitch_shift::{Shifter, TOTAL_F32};
+    type State = Box<[f32; TOTAL_F32]>;
+    let state_vec = vec![0.0; TOTAL_F32];
+    let state_box: State = state_vec.try_into().unwrap();
+    let mut shifter = Shifter::new(state_box);
+
+    let mut padded = samples.to_vec();
+    let rem = padded.len() % 128;
+    if rem != 0 {
+        padded.extend(std::iter::repeat_n(0.0, 128 - rem));
+    }
+
+    let mut out = Vec::with_capacity(padded.len());
+    for chunk in padded.chunks_exact(128) {
+        let out_chunk = shifter.shift(chunk, semitones, 128, sample_rate);
+        out.extend_from_slice(out_chunk);
+    }
+    out.truncate(samples.len());
+    out
+}
+
+fn apply_distortion(samples: &mut [f32], amount: f32) {
+    let drive = 1.0 + amount * 15.0;
+    for s in samples.iter_mut() {
+        *s = (*s * drive).tanh();
+    }
+}
+
+fn apply_bitcrush(samples: &mut [f32], bits: u32, mix: f32) {
+    let levels = (1u32 << bits) as f32;
+    for s in samples.iter_mut() {
+        let crushed = (*s * levels).round() / levels;
+        *s = *s * (1.0 - mix) + crushed * mix;
+    }
+}
+
+fn apply_vibrato(
+    samples: &[f32],
+    sample_rate: f32,
+    depth: f32,
+    rate_hz: f32,
+    mix: f32,
+) -> Vec<f32> {
+    let base_delay_samples = 5.0 * sample_rate / 1000.0;
+    let depth_samples = depth * 5.0 * sample_rate / 1000.0;
+    let mut out = Vec::with_capacity(samples.len());
+    for (i, &dry) in samples.iter().enumerate() {
+        let t = i as f32 / sample_rate;
+        let lfo = (2.0 * PI * rate_hz * t).sin();
+        let delay = base_delay_samples + depth_samples * lfo;
+        let read_pos = i as f32 - delay;
+        let wet = if read_pos >= 0.0 {
+            let idx0 = read_pos.floor() as usize;
+            let frac = read_pos - read_pos.floor();
+            let s0 = samples.get(idx0).copied().unwrap_or(0.0);
+            let s1 = samples.get(idx0 + 1).copied().unwrap_or(s0);
+            s0 + (s1 - s0) * frac
+        } else {
+            0.0
+        };
+        out.push(dry * (1.0 - mix) + wet * mix);
+    }
+    out
+}
+
+fn apply_reverb(samples: &[f32], sample_rate: f32, decay_s: f32, mix: f32) -> Vec<f32> {
+    let comb_delays_ms = [29.7f32, 37.1, 41.1, 43.7];
+    let allpass_delays_ms = [5.0f32, 1.7];
+    let feedback = 10f32.powf(-3.0 * (comb_delays_ms[0] / 1000.0) / decay_s.max(0.01));
+
+    let mut wet = vec![0.0f32; samples.len()];
+    for &delay_ms in &comb_delays_ms {
+        let delay_samples = ((delay_ms / 1000.0) * sample_rate) as usize;
+        if delay_samples == 0 {
+            continue;
+        }
+        let mut buf = vec![0.0f32; delay_samples];
+        let mut idx = 0;
+        for (i, &s) in samples.iter().enumerate() {
+            let delayed = buf[idx];
+            let val = s + delayed * feedback;
+            buf[idx] = val;
+            wet[i] += val * 0.25;
+            idx = (idx + 1) % delay_samples;
+        }
+    }
+    for &delay_ms in &allpass_delays_ms {
+        let delay_samples = ((delay_ms / 1000.0) * sample_rate) as usize;
+        if delay_samples == 0 {
+            continue;
+        }
+        let g = 0.5;
+        let mut buf = vec![0.0f32; delay_samples];
+        let mut idx = 0;
+        for w in wet.iter_mut() {
+            let delayed = buf[idx];
+            let input = *w;
+            let output = -g * input + delayed;
+            buf[idx] = input + g * output;
+            *w = output;
+            idx = (idx + 1) % delay_samples;
+        }
+    }
+
+    samples
+        .iter()
+        .zip(wet.iter())
+        .map(|(&d, &w)| d * (1.0 - mix) + w * mix)
+        .collect()
+}
+
+/// RBJ Audio EQ Cookbook biquad.
+struct Biquad {
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
+    x1: f32,
+    x2: f32,
+    y1: f32,
+    y2: f32,
+}
+
+impl Biquad {
+    fn low_shelf(sample_rate: f32, freq: f32, gain_db: f32, slope: f32) -> Self {
+        let a = 10f32.powf(gain_db / 40.0);
+        let w0 = 2.0 * PI * freq / sample_rate;
+        let alpha = w0.sin() / 2.0 * ((a + 1.0 / a) * (1.0 / slope - 1.0) + 2.0).sqrt();
+        let cos_w0 = w0.cos();
+        let two_sqrt_a_alpha = 2.0 * a.sqrt() * alpha;
+
+        let b0 = a * ((a + 1.0) - (a - 1.0) * cos_w0 + two_sqrt_a_alpha);
+        let b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0);
+        let b2 = a * ((a + 1.0) - (a - 1.0) * cos_w0 - two_sqrt_a_alpha);
+        let a0 = (a + 1.0) + (a - 1.0) * cos_w0 + two_sqrt_a_alpha;
+        let a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0);
+        let a2 = (a + 1.0) + (a - 1.0) * cos_w0 - two_sqrt_a_alpha;
+
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+
+    fn high_shelf(sample_rate: f32, freq: f32, gain_db: f32, slope: f32) -> Self {
+        let a = 10f32.powf(gain_db / 40.0);
+        let w0 = 2.0 * PI * freq / sample_rate;
+        let alpha = w0.sin() / 2.0 * ((a + 1.0 / a) * (1.0 / slope - 1.0) + 2.0).sqrt();
+        let cos_w0 = w0.cos();
+        let two_sqrt_a_alpha = 2.0 * a.sqrt() * alpha;
+
+        let b0 = a * ((a + 1.0) + (a - 1.0) * cos_w0 + two_sqrt_a_alpha);
+        let b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0);
+        let b2 = a * ((a + 1.0) + (a - 1.0) * cos_w0 - two_sqrt_a_alpha);
+        let a0 = (a + 1.0) - (a - 1.0) * cos_w0 + two_sqrt_a_alpha;
+        let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w0);
+        let a2 = (a + 1.0) - (a - 1.0) * cos_w0 - two_sqrt_a_alpha;
+
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+
+    fn peaking(sample_rate: f32, freq: f32, gain_db: f32, q: f32) -> Self {
+        let a = 10f32.powf(gain_db / 40.0);
+        let w0 = 2.0 * PI * freq / sample_rate;
+        let alpha = w0.sin() / (2.0 * q);
+        let cos_w0 = w0.cos();
+
+        let b0 = 1.0 + alpha * a;
+        let b1 = -2.0 * cos_w0;
+        let b2 = 1.0 - alpha * a;
+        let a0 = 1.0 + alpha / a;
+        let a1 = -2.0 * cos_w0;
+        let a2 = 1.0 - alpha / a;
+
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+
+    fn process(&mut self, x0: f32) -> f32 {
+        let y0 = self.b0 * x0 + self.b1 * self.x1 + self.b2 * self.x2
+            - self.a1 * self.y1
+            - self.a2 * self.y2;
+        self.x2 = self.x1;
+        self.x1 = x0;
+        self.y2 = self.y1;
+        self.y1 = y0;
+        y0
+    }
+}
+
+fn apply_eq(samples: &mut [f32], sample_rate: f32) {
+    let mut low = Biquad::low_shelf(sample_rate, 200.0, -3.0, 1.0);
+    let mut mid = Biquad::peaking(sample_rate, 1000.0, 4.0, 1.0);
+    let mut high = Biquad::high_shelf(sample_rate, 4000.0, -10.0, 1.0);
+    for s in samples.iter_mut() {
+        let v = low.process(*s);
+        let v = mid.process(v);
+        let v = high.process(v);
+        *s = v;
+    }
+}
+
+/// Peak-normalize down to `ceiling` if the chain pushed the signal above it
+/// (spiking found this happens at some parameter combinations, e.g. pitch
+/// +3.5st + distortion 0.2 hit 1.045) — prevents the hard clipping that
+/// `write_wav_bytes`'s clamp would otherwise silently introduce.
+fn limit_peaks(samples: &mut [f32], ceiling: f32) {
+    let max_abs = samples.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+    if max_abs > ceiling {
+        let scale = ceiling / max_abs;
+        for s in samples.iter_mut() {
+            *s *= scale;
+        }
+    }
+}
+
+// ---------- WAV encoding (hand-rolled per VOICE_SPEC.md: "minimal WAV
+// header", no external audio-encoding dependency) ----------
+
+fn write_wav_bytes(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+    let byte_rate = sample_rate * 2;
+    let block_align: u16 = 2;
+    let data_len = (samples.len() as u32) * 2;
+    let mut buf = Vec::with_capacity(44 + data_len as usize);
+
+    buf.extend_from_slice(b"RIFF");
+    buf.extend_from_slice(&(36 + data_len).to_le_bytes());
+    buf.extend_from_slice(b"WAVE");
+    buf.extend_from_slice(b"fmt ");
+    buf.extend_from_slice(&16u32.to_le_bytes());
+    buf.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    buf.extend_from_slice(&1u16.to_le_bytes()); // mono
+    buf.extend_from_slice(&sample_rate.to_le_bytes());
+    buf.extend_from_slice(&byte_rate.to_le_bytes());
+    buf.extend_from_slice(&block_align.to_le_bytes());
+    buf.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+    buf.extend_from_slice(b"data");
+    buf.extend_from_slice(&data_len.to_le_bytes());
+
+    for &s in samples {
+        let clamped = s.clamp(-1.0, 1.0);
+        let v = (clamped * i16::MAX as f32) as i16;
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+    buf
+}
+
+/// Re-encodes a WAV buffer with every sample scaled by `volume` (clamped to
+/// 0.0-1.0). Used to apply the user's volume slider at serve time, on top
+/// of a cached canonical clip, without needing to re-run synthesis or the
+/// effects chain. Returns `bytes` unchanged if it's too short to have a
+/// full header (mirrors `read_wav_duration_ms`'s defensiveness).
+fn apply_volume(bytes: &[u8], volume: f32) -> Vec<u8> {
+    if bytes.len() < 44 {
+        return bytes.to_vec();
+    }
+    let volume = volume.clamp(0.0, 1.0);
+    let sample_rate = u32::from_le_bytes(bytes[24..28].try_into().unwrap());
+    let samples: Vec<f32> = bytes[44..]
+        .chunks_exact(2)
+        .map(|c| (i16::from_le_bytes([c[0], c[1]]) as f32 / i16::MAX as f32) * volume)
+        .collect();
+    write_wav_bytes(&samples, sample_rate)
+}
+
+/// Reads sample rate + data length back out of a buffer `write_wav_bytes`
+/// produced, to recover `duration_ms` for cache hits without needing a
+/// sidecar metadata file. Returns `None` if `bytes` is too short to have a
+/// full 44-byte header.
+fn read_wav_duration_ms(bytes: &[u8]) -> Option<u32> {
+    if bytes.len() < 44 {
+        return None;
+    }
+    let sample_rate = u32::from_le_bytes(bytes[24..28].try_into().ok()?);
+    let data_len = u32::from_le_bytes(bytes[40..44].try_into().ok()?);
+    if sample_rate == 0 {
+        return None;
+    }
+    let num_samples = data_len / 2;
+    Some((num_samples as u64 * 1000 / sample_rate as u64) as u32)
+}
+
+// ---------- Tauri commands ----------
+
+#[tauri::command]
+pub async fn synthesize_flavor_line(app: AppHandle, index: u32) -> Option<ReminderAudio> {
+    let settings = crate::settings::load_settings(&app);
+    if !settings.voice.enabled {
+        return None;
+    }
+    let line = dialogues::FLAVOR_LINES.get(index as usize)?;
+    synthesize(
+        &app,
+        line.for_language(settings.voice.language),
+        settings.voice.language,
+        settings.voice.volume,
+    )
+    .await
+}
+
+/// English text for every flavor line, in `dialogues::FLAVOR_LINES` order —
+/// fetched once by the Renderer at startup so it can keep picking/
+/// displaying locally afterward without a round-trip per click, while
+/// `dialogues.rs` stays the single source of truth for the content itself.
+#[tauri::command]
+pub fn get_flavor_lines() -> Vec<String> {
+    dialogues::FLAVOR_LINES
+        .iter()
+        .map(|line| line.en.to_string())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wav_header_roundtrip_reports_correct_duration() {
+        let sample_rate = 44100u32;
+        let samples = vec![0.0f32; sample_rate as usize]; // exactly 1 second
+        let bytes = write_wav_bytes(&samples, sample_rate);
+
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        assert_eq!(read_wav_duration_ms(&bytes), Some(1000));
+    }
+
+    #[test]
+    fn wav_duration_half_second() {
+        let sample_rate = 44100u32;
+        let samples = vec![0.0f32; (sample_rate / 2) as usize];
+        let bytes = write_wav_bytes(&samples, sample_rate);
+        assert_eq!(read_wav_duration_ms(&bytes), Some(500));
+    }
+
+    #[test]
+    fn wav_duration_none_for_truncated_buffer() {
+        assert_eq!(read_wav_duration_ms(&[0u8; 10]), None);
+    }
+
+    #[test]
+    fn samples_clamp_rather_than_wrap_on_overflow() {
+        let bytes = write_wav_bytes(&[2.0, -2.0], 44100);
+        let s0 = i16::from_le_bytes([bytes[44], bytes[45]]);
+        let s1 = i16::from_le_bytes([bytes[46], bytes[47]]);
+        assert_eq!(s0, i16::MAX);
+        assert_eq!(s1, -i16::MAX);
+    }
+
+    #[test]
+    fn apply_volume_halves_sample_amplitude_at_half_volume() {
+        let original = write_wav_bytes(&[1.0, -1.0, 0.5], 44100);
+        let scaled = apply_volume(&original, 0.5);
+
+        let sample_at =
+            |bytes: &[u8], i: usize| i16::from_le_bytes([bytes[44 + i * 2], bytes[45 + i * 2]]);
+        // i16::MAX * 0.5 rounds down by 1 due to truncation, not rounding —
+        // assert within 1 LSB rather than exact equality.
+        assert!((sample_at(&scaled, 0) - i16::MAX / 2).abs() <= 1);
+        assert!((sample_at(&scaled, 1) - (-i16::MAX / 2)).abs() <= 1);
+    }
+
+    #[test]
+    fn apply_volume_zero_produces_silence() {
+        let original = write_wav_bytes(&[1.0, -1.0, 0.5], 44100);
+        let scaled = apply_volume(&original, 0.0);
+        for chunk in scaled[44..].chunks_exact(2) {
+            assert_eq!(i16::from_le_bytes([chunk[0], chunk[1]]), 0);
+        }
+    }
+
+    #[test]
+    fn apply_volume_clamps_above_one_to_unchanged_amplitude() {
+        // Decode-then-re-encode isn't bit-exact due to float rounding, so
+        // compare within 1 LSB rather than asserting byte-for-byte equality.
+        let original = write_wav_bytes(&[0.5], 44100);
+        let scaled = apply_volume(&original, 5.0);
+        let sample = |bytes: &[u8]| i16::from_le_bytes([bytes[44], bytes[45]]);
+        assert!((sample(&scaled) - sample(&original)).abs() <= 1);
+    }
+
+    #[test]
+    fn apply_volume_preserves_sample_rate_and_duration() {
+        let original = write_wav_bytes(&vec![0.5f32; 44100], 44100);
+        let scaled = apply_volume(&original, 0.3);
+        assert_eq!(read_wav_duration_ms(&scaled), Some(1000));
+    }
+
+    #[test]
+    fn apply_volume_leaves_short_buffers_unchanged() {
+        assert_eq!(apply_volume(&[1, 2, 3], 0.5), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn cache_key_differs_by_language_for_same_text() {
+        let en = cache_key("hello", VoiceLanguage::En);
+        let ja = cache_key("hello", VoiceLanguage::Ja);
+        assert_ne!(en, ja);
+    }
+
+    #[test]
+    fn cache_key_is_stable_for_same_input() {
+        assert_eq!(
+            cache_key("Time to drink some water, master.", VoiceLanguage::En),
+            cache_key("Time to drink some water, master.", VoiceLanguage::En)
+        );
+    }
+
+    #[test]
+    fn limit_peaks_scales_down_when_above_ceiling() {
+        let mut samples = vec![0.5, -1.045, 0.2];
+        limit_peaks(&mut samples, 0.98);
+        let max_abs = samples.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+        assert!((max_abs - 0.98).abs() < 1e-4);
+    }
+
+    #[test]
+    fn limit_peaks_leaves_signal_untouched_when_under_ceiling() {
+        let mut samples = vec![0.5, -0.3, 0.2];
+        let before = samples.clone();
+        limit_peaks(&mut samples, 0.98);
+        assert_eq!(samples, before);
+    }
+
+    #[test]
+    fn verify_checksum_accepts_matching_hash() {
+        let bytes = b"hello world";
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        let expected = to_hex(&hasher.finalize());
+        assert!(verify_checksum(bytes, &expected).is_ok());
+    }
+
+    #[test]
+    fn verify_checksum_rejects_mismatched_hash() {
+        assert!(verify_checksum(
+            b"hello world",
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        )
+        .is_err());
+    }
+}

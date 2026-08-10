@@ -1,7 +1,9 @@
 mod behavior;
+mod dialogues;
 mod settings;
 mod shell;
 mod state;
+mod voice;
 
 use tauri::Manager;
 
@@ -29,7 +31,10 @@ pub fn run() {
             shell::close_settings,
             shell::list_monitors,
             shell::report_eye_bounds,
+            shell::set_flavor_popup_visible,
             state::get_state,
+            voice::synthesize_flavor_line,
+            voice::get_flavor_lines,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -42,6 +47,12 @@ pub fn run() {
             shell::setup_tray(&handle)?;
             shell::start_hover_watcher(handle.clone());
             behavior::start_scheduler(handle.clone());
+            // Eager background model load/download so the first reminder
+            // of a session isn't delayed by a multi-second cold model load
+            // stacking on top of per-call inference time (see
+            // VOICE_SPEC.md "Synthesis pipeline & caching").
+            voice::maybe_start_model_download(&handle, &settings.voice);
+            voice::maybe_eager_load(&handle, &settings.voice);
             Ok(())
         })
         .run(tauri::generate_context!())

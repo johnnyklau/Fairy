@@ -71,6 +71,28 @@ describe("state/initState", () => {
     expect(onChange).toHaveBeenCalledWith(updated);
   });
 
+  it("synthesizeFlavorLine invokes synthesize_flavor_line with the index", async () => {
+    invokeMock.mockResolvedValue({ base64Wav: "AAAA", durationMs: 1000 });
+
+    const { synthesizeFlavorLine } = await import("./index");
+    const result = await synthesizeFlavorLine(2);
+
+    expect(invokeMock).toHaveBeenCalledWith("synthesize_flavor_line", {
+      index: 2,
+    });
+    expect(result).toEqual({ base64Wav: "AAAA", durationMs: 1000 });
+  });
+
+  it("getFlavorLines invokes get_flavor_lines and returns the list", async () => {
+    invokeMock.mockResolvedValue(["Yes, master?", "Boop."]);
+
+    const { getFlavorLines } = await import("./index");
+    const result = await getFlavorLines();
+
+    expect(invokeMock).toHaveBeenCalledWith("get_flavor_lines");
+    expect(result).toEqual(["Yes, master?", "Boop."]);
+  });
+
   it("does not require the snapshot fetch to resolve before subscribing", async () => {
     // The snapshot fetch (invoke) and the live subscription (listen) are
     // independent — a slow/never-resolving get_state must not block

@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import {
   closeSettings,
   getSettings,
@@ -5,6 +6,11 @@ import {
   updateSettings,
 } from "../state";
 import type { Settings } from "../state/types";
+
+interface VoiceModelDownloadProgress {
+  downloadedBytes: number;
+  totalBytes: number;
+}
 
 export function initSettingsUi(): void {
   const root = document.getElementById("settings-app");
@@ -47,6 +53,21 @@ export function initSettingsUi(): void {
       </fieldset>
 
       <fieldset>
+        <legend>Voice</legend>
+        <label><input type="checkbox" name="voiceEnabled" /> Enabled</label>
+        <label>Language
+          <select name="voiceLanguage">
+            <option value="en">English</option>
+            <option value="ja">Japanese</option>
+          </select>
+        </label>
+        <label>Volume
+          <input type="range" name="voiceVolume" min="0" max="1" step="0.01" />
+        </label>
+        <p class="voice-download-progress" hidden></p>
+      </fieldset>
+
+      <fieldset>
         <legend>Position</legend>
         <label>Monitor
           <select name="monitorIndex"></select>
@@ -85,7 +106,15 @@ export function initSettingsUi(): void {
     ) as HTMLInputElement,
     monitorIndex: form.elements.namedItem("monitorIndex") as HTMLSelectElement,
     corner: form.elements.namedItem("corner") as HTMLSelectElement,
+    voiceEnabled: form.elements.namedItem("voiceEnabled") as HTMLInputElement,
+    voiceLanguage: form.elements.namedItem(
+      "voiceLanguage",
+    ) as HTMLSelectElement,
+    voiceVolume: form.elements.namedItem("voiceVolume") as HTMLInputElement,
   };
+  const voiceDownloadProgress = form.querySelector<HTMLParagraphElement>(
+    ".voice-download-progress",
+  );
 
   function applySettings(settings: Settings): void {
     fields.waterEnabled.checked = settings.water.enabled;
@@ -98,6 +127,9 @@ export function initSettingsUi(): void {
     fields.autostartEnabled.checked = settings.autostart.enabled;
     fields.corner.value = settings.position.corner;
     fields.monitorIndex.value = String(settings.position.monitorIndex);
+    fields.voiceEnabled.checked = settings.voice.enabled;
+    fields.voiceLanguage.value = settings.voice.language;
+    fields.voiceVolume.value = String(settings.voice.volume);
   }
 
   function handleChange(patch: Partial<Settings>): void {
@@ -194,6 +226,48 @@ export function initSettingsUi(): void {
         monitorIndex: Number(fields.monitorIndex.value),
       },
     }),
+  );
+
+  function voicePatch(): Partial<Settings> {
+    return {
+      voice: {
+        enabled: fields.voiceEnabled.checked,
+        language: fields.voiceLanguage.value as Settings["voice"]["language"],
+        volume: Number(fields.voiceVolume.value),
+      },
+    };
+  }
+  fields.voiceEnabled.addEventListener("change", () =>
+    handleChange(voicePatch()),
+  );
+  fields.voiceLanguage.addEventListener("change", () =>
+    handleChange(voicePatch()),
+  );
+  fields.voiceVolume.addEventListener("change", () =>
+    handleChange(voicePatch()),
+  );
+
+  // Backend fires this while downloading the voice model after the user
+  // first enables Voice (see voice::download_with_progress in
+  // src-tauri/src/voice.rs). Only relevant while a download is in
+  // flight — the element stays hidden the rest of the time.
+  void listen<VoiceModelDownloadProgress>(
+    "voice_model_download_progress",
+    (event) => {
+      if (!voiceDownloadProgress) return;
+      const { downloadedBytes, totalBytes } = event.payload;
+      voiceDownloadProgress.hidden = false;
+      if (totalBytes > 0) {
+        const percent = Math.round((downloadedBytes / totalBytes) * 100);
+        voiceDownloadProgress.textContent = `Downloading voice model… ${percent}%`;
+        if (downloadedBytes >= totalBytes) {
+          voiceDownloadProgress.hidden = true;
+        }
+      } else {
+        const mb = (downloadedBytes / (1024 * 1024)).toFixed(1);
+        voiceDownloadProgress.textContent = `Downloading voice model… ${mb} MB`;
+      }
+    },
   );
 
   form.querySelector(".close-button")?.addEventListener("click", () => {

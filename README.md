@@ -13,7 +13,10 @@ Tauri v2 (Rust backend + plain TS/HTML/CSS frontend, no framework).
 Six modules, matching [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) /
 [`docs/STATE_SCHEMA.md`](docs/STATE_SCHEMA.md) /
 [`docs/VISUAL_SPEC.md`](docs/VISUAL_SPEC.md) (the original v1 planning docs —
-see their headers for where the shipped implementation has since diverged):
+see their headers for where the shipped implementation has since diverged).
+[`docs/VOICE_SPEC.md`](docs/VOICE_SPEC.md) specs the Voice module
+(`src-tauri/src/voice.rs` — Supertonic 3 TTS for reminders, idle-bark, and
+eye-click flavor lines, English/Japanese, opt-in via Settings):
 
 | Module        | Where                                               | Responsibility                                                           |
 | ------------- | --------------------------------------------------- | ------------------------------------------------------------------------ |
@@ -21,7 +24,8 @@ see their headers for where the shipped implementation has since diverged):
 | Renderer      | `src/renderer/`                                     | Eye SVG + popup bubble, purely reactive to state                         |
 | Behavior      | `src-tauri/src/behavior.rs`                         | Reminder scheduler — the only thing that decides _when_ a reminder fires |
 | State/Storage | `src-tauri/src/state.rs`, `src/state/`              | Shared `CompanionState`, `Settings` persistence, IPC contract            |
-| Settings UI   | `src/settings-ui/`                                  | Reminder toggles/intervals, screen corner + monitor picker               |
+| Settings UI   | `src/settings-ui/`                                  | Reminder toggles/intervals, screen corner + monitor picker, voice toggle |
+| Voice         | `src-tauri/src/voice.rs`                            | TTS synthesis, effects chain, model provisioning, synthesis cache        |
 | Packaging     | `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` | Bundling into installers                                                 |
 
 `CompanionState` is runtime-only (rebuilt fresh on launch). `Settings` persists

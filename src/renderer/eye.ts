@@ -1,5 +1,10 @@
-const EYE_COLOR = "#378ADD";
 const SVG_NS = "http://www.w3.org/2000/svg";
+
+// Petal ring: base radius 38.5, spike reach 46.5, spike width 25deg —
+// same smooth-ring-with-sharp-spikes construction as v3, regenerated
+// at the new radii.
+const PETAL_POINTS =
+  "92.47,80.69 92.88,92.88 80.69,92.47 79.76,93.04 78.81,93.59 77.85,94.11 76.88,94.60 75.89,95.07 74.89,95.50 73.88,95.91 72.85,96.29 71.82,96.64 70.77,96.96 69.72,97.25 68.66,97.51 67.59,97.74 66.52,97.94 65.44,98.11 64.36,98.25 63.27,98.36 62.18,98.44 61.09,98.48 60.00,98.50 58.91,98.48 57.82,98.44 56.73,98.36 55.64,98.25 54.56,98.11 53.48,97.94 52.41,97.74 51.34,97.51 50.28,97.25 49.23,96.96 48.18,96.64 47.15,96.29 46.12,95.91 45.11,95.50 44.11,95.07 43.12,94.60 42.15,94.11 41.19,93.59 40.24,93.04 39.31,92.47 27.12,92.88 27.53,80.69 26.96,79.76 26.41,78.81 25.89,77.85 25.40,76.88 24.93,75.89 24.50,74.89 24.09,73.88 23.71,72.85 23.36,71.82 23.04,70.77 22.75,69.72 22.49,68.66 22.26,67.59 22.06,66.52 21.89,65.44 21.75,64.36 21.64,63.27 21.56,62.18 21.52,61.09 21.50,60.00 21.52,58.91 21.56,57.82 21.64,56.73 21.75,55.64 21.89,54.56 22.06,53.48 22.26,52.41 22.49,51.34 22.75,50.28 23.04,49.23 23.36,48.18 23.71,47.15 24.09,46.12 24.50,45.11 24.93,44.11 25.40,43.12 25.89,42.15 26.41,41.19 26.96,40.24 27.53,39.31 27.12,27.12 39.31,27.53 40.24,26.96 41.19,26.41 42.15,25.89 43.12,25.40 44.11,24.93 45.11,24.50 46.12,24.09 47.15,23.71 48.18,23.36 49.23,23.04 50.28,22.75 51.34,22.49 52.41,22.26 53.48,22.06 54.56,21.89 55.64,21.75 56.73,21.64 57.82,21.56 58.91,21.52 60.00,21.50 61.09,21.52 62.18,21.56 63.27,21.64 64.36,21.75 65.44,21.89 66.52,22.06 67.59,22.26 68.66,22.49 69.72,22.75 70.77,23.04 71.82,23.36 72.85,23.71 73.88,24.09 74.89,24.50 75.89,24.93 76.88,25.40 77.85,25.89 78.81,26.41 79.76,26.96 80.69,27.53 92.88,27.12 92.47,39.31 93.04,40.24 93.59,41.19 94.11,42.15 94.60,43.12 95.07,44.11 95.50,45.11 95.91,46.12 96.29,47.15 96.64,48.18 96.96,49.23 97.25,50.28 97.51,51.34 97.74,52.41 97.94,53.48 98.11,54.56 98.25,55.64 98.36,56.73 98.44,57.82 98.48,58.91 98.50,60.00 98.48,61.09 98.44,62.18 98.36,63.27 98.25,64.36 98.11,65.44 97.94,66.52 97.74,67.59 97.51,68.66 97.25,69.72 96.96,70.77 96.64,71.82 96.29,72.85 95.91,73.88 95.50,74.89 95.07,75.89 94.60,76.88 94.11,77.85 93.59,78.81 93.04,79.76";
 
 export function createEyeElement(): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, "svg") as SVGSVGElement;
@@ -8,14 +13,20 @@ export function createEyeElement(): SVGSVGElement {
   svg.innerHTML = `
     <defs>
       <filter id="eye-glow" x="-100%" y="-100%" width="300%" height="300%">
-        <feGaussianBlur stdDeviation="6" result="blur" />
+        <feGaussianBlur stdDeviation="7" result="blur" />
       </filter>
     </defs>
-    <circle class="eye-glow-ring" cx="60" cy="60" r="46" fill="${EYE_COLOR}" filter="url(#eye-glow)" />
-    <circle class="eye-white-ring" cx="60" cy="60" r="38" fill="none" stroke="#ffffff" stroke-width="4" />
-    <circle class="eye-color-ring" cx="60" cy="60" r="30" fill="none" stroke="${EYE_COLOR}" stroke-width="6" />
-    <circle class="eye-pupil" cx="60" cy="60" r="20" fill="${EYE_COLOR}" />
-    <circle class="eye-highlight" cx="67" cy="52" r="4" fill="#ffffff" />
+    <circle class="eye-glow-ring" cx="60" cy="60" r="55" fill="#5B86EC" opacity="0.55" filter="url(#eye-glow)" />
+    <circle class="eye-outer-fill" cx="60" cy="60" r="50" fill="#283AC3" />
+    <circle class="eye-outer-stroke" cx="60" cy="60" r="51" fill="none" stroke="#EDEBF2" stroke-width="1" />
+    <polygon class="eye-petal" points="${PETAL_POINTS}" fill="#282E88" stroke="#EDEBF2" stroke-width="0.75" stroke-opacity="0.2" />
+    <circle class="eye-white-ring" cx="60" cy="60" r="32.5" fill="#EDEBF2" />
+    <circle class="eye-periwinkle-ring" cx="60" cy="60" r="23" fill="#7E8AC2" opacity="0.75" />
+    <circle class="eye-inner-outline" cx="60" cy="60" r="16.5" fill="none" stroke="#EDEBF2" stroke-width="1.5" />
+    <circle class="eye-inner-blue-ring" cx="60" cy="60" r="16.5" fill="#1E52D6" />
+    <circle class="eye-translucent-ring" cx="60" cy="60" r="11.5" fill="#7FB0F0" opacity="0.55" />
+    <circle class="eye-pupil" cx="60" cy="60" r="11" fill="#28407D" />
+    <circle class="eye-highlight" cx="72" cy="75" r="8" fill="#F0EEE6" />
   `;
   return svg;
 }

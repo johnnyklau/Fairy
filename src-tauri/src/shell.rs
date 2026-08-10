@@ -48,6 +48,13 @@ pub fn report_eye_bounds(app: AppHandle, bounds: EyeBoundsInput) {
     );
 }
 
+/// Renderer calls this whenever it shows/hides a flavor-line popup — see
+/// `state::is_popup_visible` for why the hover watcher needs to know.
+#[tauri::command]
+pub fn set_flavor_popup_visible(app: AppHandle, visible: bool) {
+    state::set_flavor_popup_visible(&app, visible);
+}
+
 // `set_ignore_cursor_events(true)` blocks ALL mouse input to the webview,
 // including the mouseenter event that would otherwise ask to turn it back
 // off — so hover detection can't live in JS/Renderer. Shell polls the
@@ -55,7 +62,7 @@ pub fn report_eye_bounds(app: AppHandle, bounds: EyeBoundsInput) {
 // window is ignoring cursor events.
 pub fn start_hover_watcher(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let mut hovering = false;
+        let mut click_through = true;
         loop {
             tokio::time::sleep(HOVER_POLL_INTERVAL).await;
 
@@ -76,15 +83,26 @@ pub fn start_hover_watcher(app: AppHandle) {
             let eye_width = eye.width * scale;
             let eye_height = eye.height * scale;
 
-            let inside = cursor.x >= eye_left
+            let hovering = cursor.x >= eye_left
                 && cursor.x <= eye_left + eye_width
                 && cursor.y >= eye_top
                 && cursor.y <= eye_top + eye_height;
 
-            if inside != hovering {
-                hovering = inside;
-                let _ = window.set_ignore_cursor_events(!hovering);
-                state::set_click_through(&app, !hovering);
+            // While a popup is visible (reminder or flavor-line), never
+            // re-engage click-through, even if the cursor isn't over the
+            // eye — toggling `WS_EX_TRANSPARENT` on a layered, always-on-
+            // top window while its content just changed appears to make
+            // Windows/WebView2 skip compositing the update, so the popup
+            // visually vanishes even though nothing in Fairy's own code
+            // ever hid it. Checked fresh every poll tick (not just on a
+            // hover transition) so a popup that appears while the cursor
+            // is already off the eye still forces the window interactive.
+            let should_click_through = !hovering && !state::is_popup_visible(&app);
+
+            if should_click_through != click_through {
+                click_through = should_click_through;
+                let _ = window.set_ignore_cursor_events(click_through);
+                state::set_click_through(&app, click_through);
             }
         }
     });

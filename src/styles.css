@@ -67,6 +67,21 @@ body {
   opacity: 0.85;
 }
 
+.eye-petal {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: eye-petal-spin 12s linear infinite;
+}
+
+@keyframes eye-petal-spin {
+  from {
+    transform: scale(1.08) rotate(0deg);
+  }
+  to {
+    transform: scale(1.08) rotate(360deg);
+  }
+}
+
 .popup {
   margin-left: 18px;
   position: relative;

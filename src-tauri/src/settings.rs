@@ -1,5 +1,6 @@
 use crate::shell::{apply_autostart, apply_window_position};
 use crate::state::Settings;
+use crate::voice;
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
@@ -25,6 +26,7 @@ fn sanitize(settings: &mut Settings) {
     if !is_valid_time_of_day(&settings.workout.time_of_day) {
         settings.workout.time_of_day = Settings::default().workout.time_of_day;
     }
+    settings.voice.volume = settings.voice.volume.clamp(0.0, 1.0);
 }
 
 fn is_valid_time_of_day(value: &str) -> bool {
@@ -97,6 +99,8 @@ pub fn update_settings(app: AppHandle, settings: serde_json::Value) -> Result<Se
 
     apply_window_position(&app, &merged.position);
     apply_autostart(&app, merged.autostart.enabled);
+    voice::maybe_start_model_download(&app, &merged.voice);
+    voice::maybe_eager_load(&app, &merged.voice);
 
     Ok(merged)
 }
@@ -140,6 +144,63 @@ mod tests {
 
         let merged: Settings = serde_json::from_value(base).unwrap();
         assert!(merged.autostart.enabled);
+    }
+
+    #[test]
+    fn voice_defaults_to_disabled_english_half_volume() {
+        let voice = Settings::default().voice;
+        assert!(!voice.enabled);
+        assert_eq!(voice.language, crate::state::VoiceLanguage::En);
+        assert_eq!(voice.volume, 0.5);
+    }
+
+    #[test]
+    fn old_voice_object_missing_just_volume_key_defaults_to_half_without_resetting_other_settings()
+    {
+        // Real settings.json files already exist with `voice: { enabled,
+        // language }` written before `volume` existed (not just files
+        // missing `voice` entirely, covered by the test below) — this must
+        // deserialize with volume defaulting to 0.5, not fail the whole
+        // Settings parse and silently reset water/break/workout/etc. back
+        // to defaults too.
+        let mut base = serde_json::to_value(Settings::default()).unwrap();
+        base["voice"] = json!({ "enabled": true, "language": "en" });
+        base["water"] = json!({ "enabled": false, "intervalMinutes": 90 });
+
+        let merged: Settings = serde_json::from_value(base).unwrap();
+        assert!(merged.voice.enabled);
+        assert_eq!(merged.voice.volume, 0.5);
+        // Proves the whole struct didn't fall back to Settings::default().
+        assert!(!merged.water.enabled);
+        assert_eq!(merged.water.interval_minutes, 90);
+    }
+
+    #[test]
+    fn sanitize_clamps_out_of_range_volume() {
+        let mut settings = Settings::default();
+        settings.voice.volume = 2.5;
+        sanitize(&mut settings);
+        assert_eq!(settings.voice.volume, 1.0);
+
+        settings.voice.volume = -1.0;
+        sanitize(&mut settings);
+        assert_eq!(settings.voice.volume, 0.0);
+    }
+
+    #[test]
+    fn old_settings_json_missing_voice_key_defaults_to_disabled_english() {
+        // Same migration-safety guarantee as `position`/`autostart`: a
+        // settings.json written before voice existed must still
+        // deserialize, defaulting off rather than failing to load — voice
+        // is opt-in, not a surprise for existing users on their next
+        // update (see VOICE_SPEC.md).
+        let mut base = serde_json::to_value(Settings::default()).unwrap();
+        base.as_object_mut().unwrap().remove("voice");
+
+        let merged: Settings = serde_json::from_value(base).unwrap();
+        assert!(!merged.voice.enabled);
+        assert_eq!(merged.voice.language, crate::state::VoiceLanguage::En);
+        assert_eq!(merged.voice.volume, 0.5);
     }
 
     #[test]

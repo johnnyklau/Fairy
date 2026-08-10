@@ -8,6 +8,7 @@ const defaultSettings: Settings = {
   idleBark: { enabled: false },
   position: { corner: "top-right", monitorIndex: 0 },
   autostart: { enabled: true },
+  voice: { enabled: false, language: "en", volume: 0.5 },
 };
 
 const defaultMonitors: MonitorInfo[] = [
@@ -18,12 +19,17 @@ const getSettingsMock = vi.fn();
 const updateSettingsMock = vi.fn();
 const listMonitorsMock = vi.fn();
 const closeSettingsMock = vi.fn();
+const listenMock = vi.fn();
 
 vi.mock("../state", () => ({
   getSettings: (...args: unknown[]) => getSettingsMock(...args),
   updateSettings: (...args: unknown[]) => updateSettingsMock(...args),
   listMonitors: (...args: unknown[]) => listMonitorsMock(...args),
   closeSettings: (...args: unknown[]) => closeSettingsMock(...args),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (...args: unknown[]) => listenMock(...args),
 }));
 
 describe("settings-ui", () => {
@@ -33,6 +39,7 @@ describe("settings-ui", () => {
     updateSettingsMock.mockReset().mockResolvedValue(defaultSettings);
     listMonitorsMock.mockReset().mockResolvedValue(defaultMonitors);
     closeSettingsMock.mockReset().mockResolvedValue(undefined);
+    listenMock.mockReset().mockResolvedValue(() => {});
     document.body.innerHTML = '<div id="settings-app"></div>';
   });
 
@@ -159,6 +166,110 @@ describe("settings-ui", () => {
         expect(getSettingsMock).toHaveBeenCalledTimes(2);
       });
     });
+  });
+
+  it("populates voice fields from fetched settings", async () => {
+    getSettingsMock.mockResolvedValue({
+      ...defaultSettings,
+      voice: { enabled: true, language: "ja", volume: 0.75 },
+    });
+    await setup();
+    expect(
+      document.querySelector<HTMLInputElement>('[name="voiceEnabled"]')
+        ?.checked,
+    ).toBe(true);
+    expect(
+      document.querySelector<HTMLSelectElement>('[name="voiceLanguage"]')
+        ?.value,
+    ).toBe("ja");
+    expect(
+      document.querySelector<HTMLInputElement>('[name="voiceVolume"]')?.value,
+    ).toBe("0.75");
+  });
+
+  it("sends the full voice group when the enabled toggle changes", async () => {
+    await setup();
+    const voiceEnabled = document.querySelector<HTMLInputElement>(
+      '[name="voiceEnabled"]',
+    )!;
+    voiceEnabled.checked = true;
+    voiceEnabled.dispatchEvent(new Event("change"));
+
+    expect(updateSettingsMock).toHaveBeenCalledWith({
+      voice: { enabled: true, language: "en", volume: 0.5 },
+    });
+  });
+
+  it("sends the full voice group when the language changes", async () => {
+    await setup();
+    const voiceLanguage = document.querySelector<HTMLSelectElement>(
+      '[name="voiceLanguage"]',
+    )!;
+    voiceLanguage.value = "ja";
+    voiceLanguage.dispatchEvent(new Event("change"));
+
+    expect(updateSettingsMock).toHaveBeenCalledWith({
+      voice: { enabled: false, language: "ja", volume: 0.5 },
+    });
+  });
+
+  it("sends the full voice group when the volume slider changes", async () => {
+    await setup();
+    const voiceVolume = document.querySelector<HTMLInputElement>(
+      '[name="voiceVolume"]',
+    )!;
+    voiceVolume.value = "0.2";
+    voiceVolume.dispatchEvent(new Event("change"));
+
+    expect(updateSettingsMock).toHaveBeenCalledWith({
+      voice: { enabled: false, language: "en", volume: 0.2 },
+    });
+  });
+
+  it("subscribes to voice_model_download_progress and shows a percentage", async () => {
+    let capturedCallback: ((event: { payload: unknown }) => void) | undefined;
+    listenMock.mockImplementation(
+      (_channel: string, cb: (event: { payload: unknown }) => void) => {
+        capturedCallback = cb;
+        return Promise.resolve(() => {});
+      },
+    );
+
+    await setup();
+    await vi.waitFor(() => {
+      expect(listenMock).toHaveBeenCalledWith(
+        "voice_model_download_progress",
+        expect.any(Function),
+      );
+    });
+
+    capturedCallback?.({
+      payload: { downloadedBytes: 50, totalBytes: 100 },
+    });
+
+    const progressEl = document.querySelector(".voice-download-progress");
+    expect(progressEl?.textContent).toContain("50%");
+    expect((progressEl as HTMLElement).hidden).toBe(false);
+  });
+
+  it("hides the download progress element once the download completes", async () => {
+    let capturedCallback: ((event: { payload: unknown }) => void) | undefined;
+    listenMock.mockImplementation(
+      (_channel: string, cb: (event: { payload: unknown }) => void) => {
+        capturedCallback = cb;
+        return Promise.resolve(() => {});
+      },
+    );
+
+    await setup();
+    await vi.waitFor(() => expect(listenMock).toHaveBeenCalled());
+
+    capturedCallback?.({
+      payload: { downloadedBytes: 100, totalBytes: 100 },
+    });
+
+    const progressEl = document.querySelector(".voice-download-progress");
+    expect((progressEl as HTMLElement).hidden).toBe(true);
   });
 
   it("close button calls closeSettings", async () => {
