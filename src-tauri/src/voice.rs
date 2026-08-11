@@ -102,7 +102,13 @@ pub fn maybe_eager_load(app: &AppHandle, voice: &VoiceSettings) {
     }
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_tts_loaded(&app);
+        // Model loading crosses into sherpa-onnx's FFI boundary — wrapped
+        // so a panic there degrades to "voice stays unavailable" instead
+        // of taking the whole app down at every future launch (this runs
+        // unconditionally in .setup() whenever voice.enabled is true).
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ensure_tts_loaded(&app);
+        }));
     });
 }
 
@@ -220,7 +226,12 @@ pub async fn synthesize(
         let app_for_blocking = app.clone();
         let text_owned = text.to_string();
         let handle = tauri::async_runtime::spawn_blocking(move || {
-            synthesize_blocking(&app_for_blocking, &text_owned, language)
+            // See the eager-load call site for why this is wrapped —
+            // same FFI boundary, same "degrade to no audio" contract.
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                synthesize_blocking(&app_for_blocking, &text_owned, language)
+            }))
+            .unwrap_or(None)
         });
 
         let bytes = match tokio::time::timeout(SYNTHESIS_TIMEOUT, handle).await {
