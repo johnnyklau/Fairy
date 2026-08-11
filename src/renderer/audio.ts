@@ -31,9 +31,14 @@ export function playBase64Wav(base64Wav: string, onEnded?: () => void): void {
     onEnded?.();
   };
   audio.addEventListener("ended", finish);
-  void audio.play().catch(() => {
-    // Autoplay can be blocked in some contexts; the popup text still
-    // shows either way, so this is silent-degrade, not an error to surface.
+  void audio.play().catch((error: unknown) => {
+    // src-tauri/src/lib.rs sets WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS to
+    // --autoplay-policy=no-user-gesture-required specifically so this
+    // shouldn't happen (reminders play with no user gesture behind them,
+    // unlike a flavor-line click) — if it does anyway, don't throw/break
+    // the UI, but do log it: a silently swallowed rejection here is
+    // exactly what made this bug invisible the first time around.
+    console.warn("playBase64Wav: audio.play() failed", error);
     finish();
   });
 }

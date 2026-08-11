@@ -17,7 +17,7 @@ export function createEyeElement(): SVGSVGElement {
       </filter>
     </defs>
     <circle class="eye-glow-ring" cx="60" cy="60" r="55" fill="#5B86EC" opacity="0.55" filter="url(#eye-glow)" />
-    <circle class="eye-outer-fill" cx="60" cy="60" r="50" fill="#283AC3" />
+    <circle class="eye-outer-fill" cx="60" cy="60" r="50" fill="#3C4ED7" />
     <circle class="eye-outer-stroke" cx="60" cy="60" r="51" fill="none" stroke="#EDEBF2" stroke-width="1" />
     <polygon class="eye-petal" points="${PETAL_POINTS}" fill="#282E88" stroke="#EDEBF2" stroke-width="0.75" stroke-opacity="0.2" />
     <circle class="eye-white-ring" cx="60" cy="60" r="32.5" fill="#EDEBF2" />

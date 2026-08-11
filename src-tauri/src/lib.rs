@@ -9,6 +9,29 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Reminders' audio is triggered by a backend IPC event, not a click,
+    // so Chromium's autoplay policy (inherited by WebView2) silently
+    // blocks it — set here, as a process-wide env var, before any WebView2
+    // environment initializes. Deliberately NOT the per-window
+    // `additionalBrowserArgs` in tauri.conf.json: that applies only to the
+    // window declared there ("main"), and requesting a *different*
+    // browser-args configuration for a second window created later (the
+    // Settings window, built dynamically) causes a WebView2 environment
+    // conflict — Settings would appear to open, then its native window
+    // silently got torn down with no close/destroy event ever reaching
+    // Tauri. This env var applies uniformly to every WebView2 instance in
+    // the process, so all windows agree on the same environment config.
+    #[cfg(target_os = "windows")]
+    // SAFETY: called once at process startup, before any other thread
+    // exists (no plugins/windows/async runtime started yet) — no
+    // concurrent env access is possible at this point.
+    unsafe {
+        std::env::set_var(
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            "--autoplay-policy=no-user-gesture-required",
+        );
+    }
+
     let builder = tauri::Builder::default();
 
     #[cfg(desktop)]
