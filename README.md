@@ -67,3 +67,9 @@ Produces an MSI and an NSIS installer under `src-tauri/target/release/bundle/`
   layout-affecting render, so this never depends on hardcoded CSS values.
 - Settings can be adjusted only from the tray icon ("Open Settings") — the
   eye itself is not a settings entry point, only a click-for-flavor-text toy.
+- Enabling Voice downloads the [Supertonic 3](https://github.com/supertone-inc/supertonic)
+  TTS model into the app data dir. Supertonic's sample/inference code is
+  MIT, but the model **weights** themselves — the file this app downloads —
+  are licensed **OpenRAIL-M**, not MIT; see `docs/VOICE_SPEC.md`'s "Open
+  risks" section for details before redistributing a build with Voice
+  enabled.

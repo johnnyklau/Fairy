@@ -17,6 +17,14 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const SPEAKER_ID: i32 = 0;
 pub const SYNTHESIS_TIMEOUT: Duration = Duration::from_secs(3);
+// Bounds the *entire* model download (DNS, connect, and reading the ~145MB
+// body), not just connecting — ureq's per-request `.timeout()` has no
+// default, so a stalled connection would otherwise hang this background
+// task forever with the Settings UI's progress indicator stuck mid-percent.
+// Generous on purpose: this is a one-time, large download that should
+// still succeed on a slow connection, just not hang indefinitely on a dead
+// one.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 const PEAK_CEILING: f32 = 0.98;
 
 const MODEL_DIR_NAME: &str = "sherpa-onnx-supertonic-3-tts-int8-2026-05-11";
@@ -131,7 +139,10 @@ fn download_and_install_model_blocking(app: &AppHandle) -> Result<(), String> {
 }
 
 fn download_with_progress(app: &AppHandle, url: &str) -> Result<Vec<u8>, String> {
-    let response = ureq::get(url).call().map_err(|e| e.to_string())?;
+    let response = ureq::get(url)
+        .timeout(DOWNLOAD_TIMEOUT)
+        .call()
+        .map_err(|e| e.to_string())?;
     let total_bytes: u64 = response
         .header("Content-Length")
         .and_then(|v| v.parse().ok())
@@ -186,8 +197,16 @@ fn extract_archive(app: &AppHandle, archive_bytes: &[u8]) -> Result<(), String> 
 static TTS_ENGINE: OnceLock<Mutex<Option<OfflineTts>>> = OnceLock::new();
 static MEM_CACHE: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
 
-fn cache_key(text: &str, language: VoiceLanguage) -> String {
+/// Includes `model_id` (in practice always `MODEL_DIR_NAME`) so a future
+/// model swap can't silently keep serving audio cached from the old model —
+/// bumping `MODEL_DIR_NAME` changes every key, making the old on-disk/
+/// in-memory entries unreachable dead weight rather than wrongly-reused
+/// hits. Taken as a parameter (not read from the constant directly) so this
+/// is unit-testable without depending on the real model name.
+fn cache_key(model_id: &str, text: &str, language: VoiceLanguage) -> String {
     let mut hasher = Sha256::new();
+    hasher.update(model_id.as_bytes());
+    hasher.update(b":");
     hasher.update(lang_code(language).as_bytes());
     hasher.update(b":");
     hasher.update(text.as_bytes());
@@ -216,7 +235,7 @@ pub async fn synthesize(
         return None;
     }
 
-    let key = cache_key(text, language);
+    let key = cache_key(MODEL_DIR_NAME, text, language);
     let canonical_bytes = if let Some(bytes) = mem_cache_get(&key) {
         bytes
     } else if let Some(bytes) = disk_cache_get(app, &key) {
@@ -775,17 +794,34 @@ mod tests {
 
     #[test]
     fn cache_key_differs_by_language_for_same_text() {
-        let en = cache_key("hello", VoiceLanguage::En);
-        let ja = cache_key("hello", VoiceLanguage::Ja);
+        let en = cache_key("model-a", "hello", VoiceLanguage::En);
+        let ja = cache_key("model-a", "hello", VoiceLanguage::Ja);
         assert_ne!(en, ja);
     }
 
     #[test]
     fn cache_key_is_stable_for_same_input() {
         assert_eq!(
-            cache_key("Time to drink some water, master.", VoiceLanguage::En),
-            cache_key("Time to drink some water, master.", VoiceLanguage::En)
+            cache_key(
+                "model-a",
+                "Time to drink some water, master.",
+                VoiceLanguage::En
+            ),
+            cache_key(
+                "model-a",
+                "Time to drink some water, master.",
+                VoiceLanguage::En
+            )
         );
+    }
+
+    #[test]
+    fn cache_key_differs_by_model_version_for_same_text_and_language() {
+        // A future model bump must invalidate old cache entries rather than
+        // silently keep serving audio synthesized by the previous model.
+        let old_model = cache_key("model-a", "hello", VoiceLanguage::En);
+        let new_model = cache_key("model-b", "hello", VoiceLanguage::En);
+        assert_ne!(old_model, new_model);
     }
 
     #[test]
