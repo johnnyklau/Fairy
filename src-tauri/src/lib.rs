@@ -70,12 +70,21 @@ pub fn run() {
             shell::setup_tray(&handle)?;
             shell::start_hover_watcher(handle.clone());
             behavior::start_scheduler(handle.clone());
-            // Eager background model load/download so the first reminder
-            // of a session isn't delayed by a multi-second cold model load
-            // stacking on top of per-call inference time (see
-            // VOICE_SPEC.md "Synthesis pipeline & caching").
             voice::maybe_start_model_download(&handle, &settings.voice);
-            voice::maybe_eager_load(&handle, &settings.voice);
+            // NOT calling voice::maybe_eager_load here anymore: loading the
+            // ONNX model this early in .setup() (crossing into sherpa-
+            // onnx's FFI while WebView2/window/COM init is still settling)
+            // crashed the installed release build at every startup with
+            // voice enabled (Windows exception 0xC0000409 — a hard process
+            // abort, not a catchable Rust panic; a std::panic::catch_unwind
+            // guard around the call did not prevent it). Confirmed as a
+            // startup-timing race, not a permanent "this FFI call can't
+            // run in release mode" problem: the identical call, deferred
+            // to the first real synthesis request (already lazy via
+            // ensure_tts_loaded in synthesize_blocking, well after startup
+            // has settled), completes successfully. Trades away the
+            // "first reminder isn't delayed by a cold load" nicety for
+            // not crashing on every launch.
             Ok(())
         })
         .run(tauri::generate_context!())

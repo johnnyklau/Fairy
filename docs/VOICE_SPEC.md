@@ -10,7 +10,13 @@
 ## Goal
 
 Voice Fairy's scheduled reminders (water/break/workout) using
-[Supertonic 3](https://github.com/supertone-inc/supertonic) (MIT license),
+[Supertonic 3](https://github.com/supertone-inc/supertonic) — dual-licensed:
+the sample/inference code is MIT, but the **model weights Fairy actually
+downloads and redistributes are OpenRAIL-M**, a Responsible-AI license with
+behavioral-use restrictions, not a permissive license (confirmed directly
+against the `supertone-inc/supertonic` repo — see item 2 under "Open risks"
+below; this doc previously stated "MIT license" for the whole project,
+which was inaccurate for the weights specifically) —
 with a Settings toggle to switch the spoken language between English and
 Japanese. Both languages ship together — Supertonic is a single
 multilingual model, so there's no "English first, Japanese later"
@@ -296,12 +302,14 @@ settings.voice.language)` before calling `set_reminder(...)`**, where
    same resilience pattern already used throughout `settings.rs`/
    `shell.rs` (`let Ok(...) = ... else { return }`).
 
-Since the popup now waits on synthesis when voice is enabled, eager
-background model load at startup (see
-[Synthesis pipeline & caching](#synthesis-pipeline--caching)) matters more
-than a nice-to-have: a cold model load on the first reminder of a session
-would otherwise stack on top of per-call inference time, making that first
-delay noticeably longer than subsequent ones.
+Since the popup now waits on synthesis when voice is enabled, a cold model
+load on the first reminder of a session stacks on top of per-call
+inference time, making that first delay noticeably longer than subsequent
+ones. An eager background load at startup was tried specifically to avoid
+this, but see
+[Synthesis pipeline & caching](#synthesis-pipeline--caching) — it caused a
+real crash and was reverted to lazy-only loading, so this first-reminder
+delay is now an accepted tradeoff, not something mitigated.
 
 This also means Mode stays `Reminder` (blocking other reminders from firing,
 per the existing "one thing at a time" rule) for the full audio duration,
@@ -396,12 +404,22 @@ happens well before the user's first click in practice.
   on-disk WAV files under the app data dir (e.g.
   `%APPDATA%\com.fairy.app\voice_cache\<hash>.wav`) so a restart doesn't
   re-synthesize the same three reminder strings again.
-- **Model load**: lazy on first synthesis call, _or_ kicked off as a
-  background async task at startup when `voice.enabled` (same
-  fire-and-forget spawn pattern already used for `start_hover_watcher` /
-  `start_scheduler` in `lib.rs`'s `.setup()`), so the first real reminder
-  isn't delayed by a multi-second cold model load. Recommend eager
-  background load — the cost is paid once, off the critical path.
+- **Model load**: lazy on first synthesis call, via `ensure_tts_loaded` in
+  `synthesize_blocking`. An eager background load at startup was tried
+  (fire-and-forget spawn from `.setup()`, same pattern as
+  `start_hover_watcher`/`start_scheduler`) but **caused a real crash**:
+  loading the ONNX model that early — while WebView2/window/COM init is
+  still settling — crashed the installed release build at every launch
+  with voice enabled (Windows exception `0xC0000409`, a hard process
+  abort that a `catch_unwind` guard around the call could not prevent).
+  Confirmed as a startup-timing race, not a permanent problem with the
+  call itself: the identical call, deferred to the first real synthesis
+  request, completes successfully every time. `lib.rs` no longer calls
+  eager-load from `.setup()` — only `settings::update_settings` still
+  triggers it (when the user turns voice on interactively, well after
+  startup has settled, which isn't implicated by this bug). The tradeoff:
+  the very first reminder of a session pays a one-time cold-load delay on
+  top of inference time, which is judged safer than crashing on launch.
 - **Output format**: raw PCM from Supertonic (**44100 Hz mono** — not
   Kokoro's 24000 Hz, a leftover assumption from the original plan) wrapped
   in a minimal WAV header. Read the sample rate from `tts.sample_rate()` at
@@ -602,12 +620,25 @@ Mirror the project's existing rigor (27 Rust tests, 20 frontend tests as of
    voice X, gender Y" the way there was for Kokoro's sid tables. Not
    blocking, just means the [Voice selection](#voice-selection) section
    above is the source of truth, not an external voice manifest.
-2. Confirm Supertonic 3's actual license terms for redistribution/bundling
-   are still MIT at implementation time (they were at spec-writing time) —
-   this affects whether shipping the model at all is clean. Separately, the
-   `sherpa-onnx` crate itself is Apache-2.0 — two different licenses cover
-   two different artifacts (the inference bindings vs. the model weights),
-   don't conflate them when documenting this in the app.
+2. **RESOLVED (checked directly against `supertone-inc/supertonic`):**
+   Supertonic 3's *sample/inference code* is MIT, but the **model weights**
+   — the `.tar.bz2` this app downloads and installs into every user's app
+   data dir — are licensed **OpenRAIL-M**, not MIT. OpenRAIL-M is a
+   Responsible-AI license: permissive for the ordinary use case here
+   (voicing fixed, benign wellness-reminder text), but it carries
+   behavioral-use restrictions a plain permissive license wouldn't, and
+   typically expects the license/notice to travel with redistributed
+   weights. Before shipping this more widely than a personal build:
+   (a) read the actual OpenRAIL-M terms
+   ([RAIL license family](https://www.licenses.ai/)) end to end rather than
+   trusting this summary, and (b) consider surfacing the model's license
+   notice somewhere a user would see it (e.g. this doc / README), since
+   Fairy is the one distributing the weights, not just consuming them
+   locally. Separately, the `sherpa-onnx` crate itself is Apache-2.0 — three
+   different licenses now cover three different artifacts (Fairy's own code
+   has no declared license; the inference bindings are Apache-2.0; the model
+   weights are OpenRAIL-M) — don't conflate them when documenting this in
+   the app.
 3. Decide the exact "enabled but model not ready yet" UI state — this spec
    leaves the precise Settings-UI treatment (spinner? disabled toggle?
    error text?) to the implementer's judgment.
