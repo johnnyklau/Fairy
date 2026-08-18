@@ -4,6 +4,9 @@ A small always-on-top desktop companion: a transparent, borderless eye icon
 that sits in a screen corner and shows wellness reminders (water, breaks,
 workouts).
 
+[![CI](https://github.com/johnnyklau/Fairy/actions/workflows/ci.yml/badge.svg)](https://github.com/johnnyklau/Fairy/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/johnnyklau/Fairy/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/johnnyklau/Fairy/actions/workflows/github-code-scanning/codeql)
+
 ## Writeup
 
 https://johnnyklau.github.io/Fairy
