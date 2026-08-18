@@ -27,6 +27,7 @@ pub enum GlowIntensity {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ActiveReminder {
     #[serde(rename = "type")]
     pub kind: ReminderType,
@@ -376,4 +377,36 @@ pub fn get_state(app: AppHandle) -> CompanionState {
     let state_handle = app.state::<AppState>();
     let companion = state_handle.companion.lock().unwrap();
     companion.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression test for a real bug: ActiveReminder was missing
+    // #[serde(rename_all = "camelCase")], so triggered_at serialized as
+    // snake_case while the frontend's CompanionState type expected
+    // triggeredAt. The field silently deserialized as `undefined` in TS,
+    // which broke the Renderer's "only play a reminder's audio once" dedup
+    // check (undefined !== null on the first reminder, then
+    // undefined === undefined forever after) — reminder audio played once
+    // per launch and then never again, for every reminder kind.
+    #[test]
+    fn active_reminder_serializes_fields_as_camel_case() {
+        let reminder = ActiveReminder {
+            kind: ReminderType::Break,
+            message: "test".to_string(),
+            triggered_at: 12345,
+            audio: None,
+        };
+        let json = serde_json::to_string(&reminder).unwrap();
+        assert!(
+            json.contains("\"triggeredAt\":12345"),
+            "expected camelCase triggeredAt in {json}"
+        );
+        assert!(
+            !json.contains("triggered_at"),
+            "snake_case field leaked into JSON: {json}"
+        );
+    }
 }
