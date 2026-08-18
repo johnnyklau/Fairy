@@ -4,6 +4,10 @@ A small always-on-top desktop companion: a transparent, borderless eye icon
 that sits in a screen corner and shows wellness reminders (water, breaks,
 workouts).
 
+## Writeup
+
+https://johnnyklau.github.io/Fairy
+
 ## Stack
 
 Tauri v2 (Rust backend + plain TS/HTML/CSS frontend, no framework).
