@@ -106,17 +106,36 @@ pub fn is_model_ready(app: &AppHandle) -> bool {
 
 fn model_dir_ready(dir: &Path) -> bool {
     if !MODEL_FILES.iter().all(|f| dir.join(f).is_file()) {
+        tracing::debug!(dir = %dir.display(), "model not ready: a file is missing");
         return false;
     }
-    let manifest = read_model_manifest(dir).or_else(|| write_model_manifest(dir));
-    let Some(manifest) = manifest else {
-        return false;
+    let manifest = match read_model_manifest(dir) {
+        Some(m) => m,
+        None => {
+            tracing::warn!(
+                dir = %dir.display(),
+                "no readable model manifest — generating one from files on disk (backward-compat self-heal, not a fresh verified download)"
+            );
+            match write_model_manifest(dir) {
+                Some(m) => m,
+                None => return false,
+            }
+        }
     };
-    MODEL_FILES.iter().all(|f| {
-        fs::metadata(dir.join(f))
+    let ready = MODEL_FILES.iter().all(|f| {
+        let matches = fs::metadata(dir.join(f))
             .map(|meta| manifest.get(*f) == Some(&meta.len()))
-            .unwrap_or(false)
-    })
+            .unwrap_or(false);
+        if !matches {
+            tracing::warn!(
+                file = f,
+                "model file size doesn't match manifest — treating model as corrupted"
+            );
+        }
+        matches
+    });
+    tracing::debug!(ready, "model_dir_ready check complete");
+    ready
 }
 
 fn read_model_manifest(dir: &Path) -> Option<HashMap<String, u64>> {
@@ -149,10 +168,12 @@ pub fn maybe_start_model_download(app: &AppHandle, voice: &VoiceSettings) {
     if !voice.enabled || is_model_ready(app) {
         return;
     }
+    tracing::info!("voice model not ready, starting background download");
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = download_and_install_model(&app).await {
-            eprintln!("voice model download failed: {err}");
+        match download_and_install_model(&app).await {
+            Ok(()) => tracing::info!("voice model download completed"),
+            Err(err) => tracing::error!(error = %err, "voice model download failed"),
         }
     });
 }
@@ -293,17 +314,26 @@ pub async fn synthesize(
     language: VoiceLanguage,
     volume: f32,
 ) -> Option<ReminderAudio> {
-    if text.is_empty() || !is_model_ready(app) {
+    let start = std::time::Instant::now();
+    if text.is_empty() {
+        tracing::debug!("synthesize: empty text, skipping");
+        return None;
+    }
+    if !is_model_ready(app) {
+        tracing::warn!(text, "synthesize: model not ready, no audio will play");
         return None;
     }
 
     let key = cache_key(MODEL_DIR_NAME, text, language);
     let canonical_bytes = if let Some(bytes) = mem_cache_get(&key) {
+        tracing::debug!(text, "synthesize: memory cache hit");
         bytes
     } else if let Some(bytes) = disk_cache_get(app, &key) {
+        tracing::debug!(text, "synthesize: disk cache hit");
         mem_cache_put(key.clone(), bytes.clone());
         bytes
     } else {
+        tracing::info!(text, language = ?language, "synthesize: cache miss, running inference");
         let app_for_blocking = app.clone();
         let text_owned = text.to_string();
         let handle = tauri::async_runtime::spawn_blocking(move || {
@@ -317,7 +347,18 @@ pub async fn synthesize(
 
         let bytes = match tokio::time::timeout(SYNTHESIS_TIMEOUT, handle).await {
             Ok(Ok(Some(bytes))) => bytes,
-            _ => return None,
+            Ok(Ok(None)) => {
+                tracing::error!(text, "synthesize: inference returned no audio");
+                return None;
+            }
+            Ok(Err(join_err)) => {
+                tracing::error!(text, error = %join_err, "synthesize: blocking task panicked/was cancelled");
+                return None;
+            }
+            Err(_) => {
+                tracing::error!(text, timeout = ?SYNTHESIS_TIMEOUT, "synthesize: timed out");
+                return None;
+            }
         };
 
         disk_cache_put(app, &key, &bytes);
@@ -327,6 +368,12 @@ pub async fn synthesize(
 
     let scaled = apply_volume(&canonical_bytes, volume);
     let duration_ms = read_wav_duration_ms(&scaled).unwrap_or(0);
+    tracing::info!(
+        text,
+        duration_ms,
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "synthesize: done"
+    );
     Some(ReminderAudio {
         base64_wav: BASE64.encode(&scaled),
         duration_ms,
@@ -747,6 +794,7 @@ fn read_wav_duration_ms(bytes: &[u8]) -> Option<u32> {
 
 #[tauri::command]
 pub async fn synthesize_flavor_line(app: AppHandle, index: u32) -> Option<ReminderAudio> {
+    tracing::debug!(index, "flavor line clicked");
     let settings = crate::settings::load_settings(&app);
     if !settings.voice.enabled {
         return None;

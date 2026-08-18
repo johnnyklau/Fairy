@@ -1,5 +1,6 @@
 mod behavior;
 mod dialogues;
+mod logging;
 mod settings;
 mod shell;
 mod state;
@@ -64,6 +65,8 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
+            logging::init(&handle);
+            tracing::info!(version = env!("CARGO_PKG_VERSION"), "Fairy starting up");
             if let Some(window) = handle.get_webview_window("main") {
                 let _ = window.set_ignore_cursor_events(true);
             }

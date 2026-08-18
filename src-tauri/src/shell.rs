@@ -18,7 +18,7 @@ pub fn apply_autostart(app: &AppHandle, enabled: bool) {
         manager.disable()
     };
     if let Err(err) = result {
-        eprintln!("failed to set autostart to {enabled}: {err}");
+        tracing::error!(enabled, error = %err, "failed to set autostart");
     }
 }
 

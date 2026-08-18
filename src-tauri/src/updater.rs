@@ -18,12 +18,26 @@ static PENDING_UPDATE: OnceLock<Mutex<Option<Update>>> = OnceLock::new();
 /// (this is just an HTTP GET, not an FFI model load).
 pub fn maybe_check_for_update(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let Ok(updater) = app.updater() else {
-            return;
+        tracing::info!("checking for a Fairy update");
+        let updater = match app.updater() {
+            Ok(u) => u,
+            Err(err) => {
+                tracing::error!(error = %err, "updater() failed to initialize");
+                return;
+            }
         };
-        let Ok(Some(update)) = updater.check().await else {
-            return;
+        let update = match updater.check().await {
+            Ok(Some(update)) => update,
+            Ok(None) => {
+                tracing::info!("no update available");
+                return;
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "update check failed");
+                return;
+            }
         };
+        tracing::info!(version = %update.version, "update available");
 
         let info = UpdateInfo {
             version: update.version.clone(),
@@ -46,6 +60,7 @@ pub fn maybe_check_for_update(app: AppHandle) {
 /// "Updating…" forever.
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    tracing::info!("install_update invoked");
     let update = {
         let cell = PENDING_UPDATE.get_or_init(|| Mutex::new(None));
         let mut guard = cell
@@ -53,13 +68,20 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
             .map_err(|_| "update state poisoned".to_string())?;
         guard.take()
     }
-    .ok_or_else(|| "no update pending".to_string())?;
+    .ok_or_else(|| {
+        tracing::error!("install_update: no update pending");
+        "no update pending".to_string()
+    })?;
 
     update
         .download_and_install(|_chunk_len, _total_len| {}, || {})
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            tracing::error!(error = %e, "install_update: download_and_install failed");
+            e.to_string()
+        })?;
 
+    tracing::info!("install_update: succeeded, restarting");
     // Diverges: exits and relaunches the process, never returning control.
     app.restart();
 }

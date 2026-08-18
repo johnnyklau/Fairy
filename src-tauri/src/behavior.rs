@@ -149,6 +149,7 @@ fn decide(settings: &Settings, timers: &Mutex<Timers>, now: Instant) -> Option<D
 
 async fn tick(app: &AppHandle, timers: &Mutex<Timers>) {
     if state::current_mode(app) != Mode::Idle {
+        tracing::trace!("tick: skipped, not idle");
         return;
     }
 
@@ -157,12 +158,16 @@ async fn tick(app: &AppHandle, timers: &Mutex<Timers>) {
 
     match decide(&settings, timers, now) {
         Some(Decision::Reminder { kind, line }) => {
+            tracing::info!(kind = ?kind, "scheduler decided to fire a reminder");
             show_reminder(app, kind, line, &settings).await;
         }
         Some(Decision::IdleBark { line }) => {
+            tracing::info!("scheduler decided to fire an idle bark");
             show_reminder(app, ReminderType::IdleBark, line, &settings).await;
         }
-        None => {}
+        None => {
+            tracing::trace!("tick: no reminder due");
+        }
     }
 }
 
@@ -191,6 +196,15 @@ async fn show_reminder(
     } else {
         None
     };
+    tracing::debug!(
+        kind = ?kind,
+        text = line.en,
+        voice_enabled = settings.voice.enabled,
+        has_audio = audio.is_some(),
+        duration_ms = ?audio.as_ref().map(|a| a.duration_ms),
+        triggered_at,
+        "reminder ready to show"
+    );
 
     let dismiss_after = dismiss_duration(REMINDER_DISPLAY, audio.as_ref().map(|a| a.duration_ms));
 
