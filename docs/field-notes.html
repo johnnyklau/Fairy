@@ -237,6 +237,8 @@
 
   figure svg { display: block; width: 100%; height: auto; min-width: 480px; }
 
+  .diagram-text { font-family: var(--font-mono); }
+
   figcaption {
     margin-top: 0.75rem;
     font-size: 0.85rem;
@@ -303,12 +305,130 @@
     the architecture these bugs live in.
   </p>
   <div class="stats">
-    <div class="stat"><span class="n">2</span><span class="label">entries</span></div>
+    <div class="stat"><span class="n">3</span><span class="label">entries</span></div>
     <div class="stat"><span class="n">v0.2.0</span><span class="label">current version</span></div>
   </div>
 </header>
 
 <main>
+
+<article class="entry" id="entry-2026-08-17-corrupted-model">
+  <div class="entry-head">
+    <time datetime="2026-08-17">2026-08-17</time>
+    <h2>A corrupted model file crashed the whole app instead of degrading gracefully</h2>
+  </div>
+  <div class="tags">
+    <span class="tag">ffi</span>
+    <span class="tag">onnx</span>
+    <span class="tag">data-integrity</span>
+  </div>
+
+  <dl class="facts">
+    <dt>Symptom</dt>
+    <dd>On a completely fresh reinstall, the eye rendered fine — then the whole app
+    vanished the instant it was clicked.</dd>
+    <dt>Looked like</dt>
+    <dd>The reinstall itself, or the auto-update feature that had just been added and
+    tested that same day.</dd>
+    <dt>Actually was</dt>
+    <dd>One model file (<code>vector_estimator.int8.onnx</code>) silently truncated on
+    disk since <em>weeks</em> earlier — undetected the whole time because every voice
+    test since then happened to hit a warm disk cache and never actually reload it.</dd>
+    <dt>Fix</dt>
+    <dd><code>is_model_ready()</code> now checks each file's size against a manifest
+    recorded at download time, not just that the file exists.</dd>
+  </dl>
+
+  <p>
+    Both obvious suspects were ruled out fast: an A/B build from before the reinstall
+    and before the auto-update feature existed crashed identically, and the crash
+    reproduced on an already-settled, minutes-old process — not just right at launch.
+    That left the model itself. A directory listing showed it immediately: six of the
+    seven model files shared one timestamp from the original download; the seventh was
+    dated weeks later and ~2MB smaller than a freshly redownloaded copy turned out to
+    be. Something had overwritten just that one file, incompletely, long ago.
+  </p>
+  <p>
+    The reason nobody had seen this coming: <code>synthesize()</code> checks an
+    in-memory and on-disk cache <em>before</em> ever touching the model, keyed by a hash
+    of the exact text. Every earlier "voice works" confirmation — including several
+    earlier the same day — had been a cache hit, serving bytes synthesized long before
+    the corruption happened. The corrupted file only mattered the moment something asked
+    for a line that had never been cached, which turned out not to happen for weeks.
+  </p>
+  <p>
+    When it finally did, <code>OfflineTts::create</code> tried to parse the truncated
+    file and ONNX Runtime threw a C++ exception. That exception tried to unwind across
+    the Rust/FFI boundary, and Rust's runtime did exactly what it's designed to do with
+    a foreign exception it can't safely catch: it hard-aborted the entire process,
+    printing <code>fatal runtime error: Rust cannot catch foreign exceptions,
+    aborting</code>. No amount of <code>catch_unwind</code> on the Rust side would have
+    helped — this is the same fundamental limit as the eager-load crash further up this
+    page, just reached through a different door.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 700 280" role="img" aria-label="Every synthesize call checks a cache first. A cache hit — the path every earlier test happened to take — returns bytes instantly and never touches the model. A cache miss calls into OfflineTts::create, which on a corrupted file throws a C++ exception that Rust cannot safely catch, aborting the whole process.">
+      <defs>
+        <marker id="arrow7" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+        <marker id="arrow7warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--accent-warm)"/>
+        </marker>
+      </defs>
+
+      <rect x="10" y="100" width="100" height="42" rx="5" fill="none" stroke="currentColor"/>
+      <text x="60" y="125" text-anchor="middle" font-size="11" fill="currentColor">click eye</text>
+
+      <rect x="150" y="100" width="120" height="42" rx="5" fill="none" stroke="currentColor"/>
+      <text x="210" y="121" text-anchor="middle" font-size="10.5" fill="currentColor">cache lookup</text>
+      <text x="210" y="135" text-anchor="middle" font-size="9" fill="currentColor" fill-opacity="0.6">hash(model+lang+text)</text>
+
+      <line x1="110" y1="121" x2="146" y2="121" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow7)"/>
+
+      <line x1="270" y1="112" x2="330" y2="55" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow7)"/>
+      <text x="300" y="80" text-anchor="middle" font-size="9" class="diagram-text" fill="currentColor">hit — every test</text>
+      <text x="300" y="92" text-anchor="middle" font-size="9" class="diagram-text" fill="currentColor">until today</text>
+
+      <rect x="330" y="20" width="150" height="42" rx="5" fill="none" stroke="currentColor"/>
+      <text x="405" y="41" text-anchor="middle" font-size="10.5" fill="currentColor">cached bytes</text>
+      <text x="405" y="55" text-anchor="middle" font-size="9" fill="currentColor" fill-opacity="0.6">model never touched</text>
+
+      <line x1="480" y1="41" x2="530" y2="41" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow7)"/>
+      <rect x="530" y="20" width="120" height="42" rx="5" fill="none" stroke="currentColor"/>
+      <text x="590" y="46" text-anchor="middle" font-size="11" fill="currentColor">speakers</text>
+
+      <line x1="270" y1="130" x2="330" y2="180" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow7)"/>
+      <text x="300" y="155" text-anchor="middle" font-size="9" class="diagram-text" fill="currentColor">miss — first time</text>
+      <text x="300" y="167" text-anchor="middle" font-size="9" class="diagram-text" fill="currentColor">in weeks</text>
+
+      <rect x="330" y="180" width="170" height="42" rx="5" fill="none" stroke="currentColor"/>
+      <text x="415" y="201" text-anchor="middle" font-size="10.5" fill="currentColor">OfflineTts::create</text>
+      <text x="415" y="215" text-anchor="middle" font-size="9" fill="currentColor" fill-opacity="0.6">sherpa-onnx FFI</text>
+
+      <line x1="500" y1="201" x2="540" y2="201" stroke="var(--accent-warm)" stroke-width="1.5" marker-end="url(#arrow7warn)"/>
+      <rect x="540" y="180" width="150" height="42" rx="5" fill="none" stroke="var(--accent-warm)"/>
+      <text x="615" y="201" text-anchor="middle" font-size="10.5" fill="var(--accent-warm)">C++ throws</text>
+      <text x="615" y="215" text-anchor="middle" font-size="9" fill="var(--accent-warm)">truncated file</text>
+
+      <path d="M615,222 L615,232 L470,232 L470,238" fill="none" stroke="var(--accent-warm)" stroke-width="1.5" marker-end="url(#arrow7warn)"/>
+      <rect x="330" y="240" width="220" height="32" rx="5" fill="none" stroke="var(--accent-warm)"/>
+      <text x="440" y="261" text-anchor="middle" font-size="10" fill="var(--accent-warm)">Rust aborts the whole process</text>
+    </svg>
+    <figcaption>
+      Two branches out of the same cache check — one exercised constantly, the other not
+      exercised at all for weeks. The corrupted file only mattered on the branch nobody
+      was taking.
+    </figcaption>
+  </figure>
+
+  <aside class="lesson">
+    <strong>Lesson.</strong> A cache doesn't just speed up the common path — it can quietly
+    stop testing the uncommon one. "It works" only means the path actually taken works;
+    a bug can sit fully formed on a colder path for as long as nothing happens to need it.
+  </aside>
+</article>
 
 <article class="entry" id="entry-2026-08-17-eager-load-crash">
   <div class="entry-head">
