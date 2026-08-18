@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fairy, Explained</title>
+<meta name="description" content="A guided tour of Fairy's architecture — Tauri, IPC, WebView2, and its synthesized voice pipeline.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%9A%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f6f4ef;
+    --surface: #fffdf9;
+    --surface-2: #ece6d8;
+    --ink: #201f2b;
+    --ink-dim: #5c5870;
+    --accent: #6a54d6;
+    --accent-warm: #a8471c;
+    --line: #ddd6c6;
+    --shadow: 106 84 214;
+
+    --font-display: Constantia, Georgia, "Iowan Old Style", serif;
+    --font-body: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+    --font-mono: "Cascadia Code", Consolas, "SFMono-Regular", ui-monospace, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #131320;
+      --surface: #1a1929;
+      --surface-2: #242236;
+      --ink: #eae7f2;
+      --ink-dim: #a29fc0;
+      --accent: #a996ff;
+      --accent-warm: #ff9d5c;
+      --line: #2d2b42;
+      --shadow: 0 0 0;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #131320;
+    --surface: #1a1929;
+    --surface-2: #242236;
+    --ink: #eae7f2;
+    --ink-dim: #a29fc0;
+    --accent: #a996ff;
+    --accent-warm: #ff9d5c;
+    --line: #2d2b42;
+    --shadow: 0 0 0;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0;
+    padding: 4rem 1.5rem 6rem;
+  }
+
+  .page {
+    max-width: 760px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3.5rem;
+  }
+
+  header.hero {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding-bottom: 2rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: clamp(2.1rem, 5vw, 2.9rem);
+    line-height: 1.15;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .dek {
+    font-size: 1.1rem;
+    color: var(--ink-dim);
+    max-width: 60ch;
+    text-wrap: pretty;
+  }
+
+  .dek strong { color: var(--ink); font-weight: 600; }
+
+  nav.toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1.25rem 1.5rem;
+  }
+
+  nav.toc p {
+    margin: 0 0 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+
+  nav.toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+  }
+
+  nav.toc li { break-inside: avoid; margin-bottom: 0.4rem; }
+
+  nav.toc a {
+    color: var(--ink);
+    text-decoration: none;
+    font-size: 0.92rem;
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  nav.toc a:hover { color: var(--accent); }
+
+  nav.toc .n {
+    font-family: var(--font-mono);
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    width: 1.4em;
+    flex: none;
+  }
+
+  main {
+    display: flex;
+    flex-direction: column;
+    gap: 4rem;
+  }
+
+  section {
+    display: grid;
+    grid-template-columns: 3.5rem 1fr;
+    gap: 0.5rem 1.25rem;
+  }
+
+  section > .num {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--accent);
+    padding-top: 0.35rem;
+  }
+
+  section > .body {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-width: 0;
+  }
+
+  h2 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 1.55rem;
+    margin: 0;
+    text-wrap: balance;
+    scroll-margin-top: 2rem;
+  }
+
+  h3 {
+    font-family: var(--font-body);
+    font-weight: 600;
+    font-size: 0.95rem;
+    letter-spacing: 0.01em;
+    color: var(--ink);
+    margin: 0.5rem 0 -0.25rem;
+  }
+
+  p { margin: 0; max-width: 66ch; }
+  p + p { margin-top: -0.4rem; }
+
+  a { color: var(--accent); }
+  a:hover { text-decoration-thickness: 2px; }
+  footer a { color: inherit; text-decoration-color: var(--line); }
+  footer a:hover { color: var(--accent); }
+
+  dfn.term {
+    font-style: normal;
+    border-bottom: 1px dotted var(--accent);
+    color: var(--ink);
+    cursor: help;
+    text-decoration: none;
+  }
+
+  code, .chip {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 0.1em 0.4em;
+    white-space: nowrap;
+  }
+
+  aside.note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent-warm);
+    border-radius: 3px;
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+    color: var(--ink-dim);
+    max-width: 66ch;
+  }
+
+  aside.note strong { color: var(--ink); }
+
+  figure {
+    margin: 0.5rem 0 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 1.25rem 1rem 1rem;
+    box-shadow: 0 0 0 1px rgb(var(--shadow) / 0.04), 0 8px 24px -18px rgb(var(--shadow) / 0.5);
+    overflow-x: auto;
+  }
+
+  figure svg { display: block; width: 100%; height: auto; min-width: 480px; }
+
+  figcaption {
+    margin-top: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--ink-dim);
+    border-top: 1px solid var(--line);
+    padding-top: 0.6rem;
+  }
+
+  .diagram-text { font-family: var(--font-mono); }
+
+  ul.plain {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  ul.plain li { max-width: 62ch; }
+
+  .stepper {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    overflow-x: auto;
+    margin-top: 0.25rem;
+  }
+
+  .step {
+    flex: 1 0 130px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.9rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    position: relative;
+  }
+
+  .step:not(:first-child) { border-left: none; }
+  .step:first-child { border-radius: 6px 0 0 6px; }
+  .step:last-child { border-radius: 0 6px 6px 0; }
+
+  .step::after {
+    content: "";
+    position: absolute;
+    right: -7px;
+    top: 50%;
+    transform: translateY(-50%) rotate(45deg);
+    width: 10px;
+    height: 10px;
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    z-index: 1;
+  }
+
+  .step:last-child::after { display: none; }
+
+  .step .label {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .step .what { font-size: 0.88rem; color: var(--ink-dim); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 1.5rem;
+    font-size: 0.85rem;
+    color: var(--ink-dim);
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+
+  @media (max-width: 640px) {
+    section { grid-template-columns: 1fr; }
+    section > .num { padding-top: 0; }
+    nav.toc ol { columns: 1; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="hero">
+  <span class="eyebrow">Architecture &amp; internals</span>
+  <h1>Fairy, Explained</h1>
+  <p class="dek">
+    Fairy is a small Windows app: a glowing eye that sits in the corner of your screen,
+    occasionally tells you to drink water or take a break, and — if you switch voice on —
+    says so out loud in a voice modeled on a robotic AI companion.
+    <strong>This walks through how it's built, one layer at a time.</strong>
+  </p>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#s1"><span class="n">01</span> The elevator pitch</a></li>
+    <li><a href="#s2"><span class="n">02</span> Two processes in a trenchcoat</a></li>
+    <li><a href="#s3"><span class="n">03</span> How the two sides talk</a></li>
+    <li><a href="#s4"><span class="n">04</span> The illusion of a floating eye</a></li>
+    <li><a href="#s5"><span class="n">05</span> What Fairy is thinking</a></li>
+    <li><a href="#s6"><span class="n">06</span> The scheduler</a></li>
+    <li><a href="#s7"><span class="n">07</span> Teaching the fairy to talk</a></li>
+    <li><a href="#s8"><span class="n">08</span> From source to installer</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="s1">
+  <div class="num">01</div>
+  <div class="body">
+    <h2>The elevator pitch</h2>
+    <p>
+      Fairy is a desktop wellness companion — a small, always-on-top window shaped like
+      a single eye, docked in a corner of the screen. On a timer, or when you've been idle
+      too long, it pops up a short line of text ("drink some water, master") and, if voice
+      is enabled, speaks it. The character is modeled on <strong>Fairy</strong>, the robotic
+      AI companion from the game <em>Zenless Zone Zero</em> — so the voice isn't meant to
+      sound clean or assistant-like. Raw synthesized speech gets deliberately pitched up,
+      distorted, and bit-crushed until it reads as something mechanical talking to you,
+      not a polite virtual assistant.
+    </p>
+    <p>
+      Under the hood, that single visible eye is the tip of two quite different pieces of
+      software glued together and shipped as one Windows installer: a small, safety-focused
+      systems language doing the thinking, and a full web browser engine doing the drawing.
+      The rest of this tour is about how those two pieces cooperate, and what each of Fairy's
+      features costs to build once you look past the eye itself.
+    </p>
+  </div>
+</section>
+
+<section id="s2">
+  <div class="num">02</div>
+  <div class="body">
+    <h2>Two processes in a trenchcoat</h2>
+    <p>
+      Fairy is built with <dfn class="term" title="A toolkit for building desktop apps out of a native backend plus a web-based UI, without bundling a whole separate browser.">Tauri</dfn>.
+      The idea: instead of writing native Windows UI code (verbose, and a different world
+      from web development), let the UI be ordinary HTML/CSS/TypeScript, and let the
+      operating system's <em>already-installed</em> browser engine render it. On Windows
+      that engine is <dfn class="term" title="Microsoft's Chromium-based browser engine, built into Windows 10/11, that any app can embed to render web content.">WebView2</dfn> —
+      the same rendering engine as Microsoft Edge, just running invisibly inside Fairy's
+      window instead of inside a browser tab.
+    </p>
+    <p>
+      The other half is a native <code>fairy.exe</code> written in <dfn class="term" title="A systems programming language that gives C++-level performance and control, with compile-time checks that rule out whole categories of memory bugs.">Rust</dfn>.
+      It owns everything that isn't drawing: reading settings from disk, deciding when a
+      reminder should fire, running the text-to-speech engine, talking to the Windows tray
+      icon. The two halves genuinely don't share memory or a language — they're bridged
+      entirely through message-passing, covered next.
+    </p>
+    <figure>
+      <svg viewBox="0 0 640 230" role="img" aria-label="Fairy is one Windows process containing two halves: a Rust core handling logic and state, and an embedded WebView2 browser engine handling the visible UI, connected by an IPC bridge.">
+        <defs>
+          <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <rect x="8" y="8" width="624" height="180" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-dasharray="4 4"/>
+        <text x="24" y="28" class="diagram-text" font-size="11" fill="currentColor" fill-opacity="0.55">fairy.exe — one Windows process</text>
+
+        <rect x="40" y="55" width="240" height="110" rx="6" fill="none" stroke="currentColor"/>
+        <text x="160" y="80" text-anchor="middle" font-size="14" fill="currentColor" font-weight="600">Rust core</text>
+        <text x="160" y="102" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">scheduler · settings</text>
+        <text x="160" y="118" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">state · voice engine</text>
+        <text x="160" y="134" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">file system access</text>
+        <text x="160" y="150" text-anchor="middle" class="diagram-text" font-size="10" fill="var(--accent)">src-tauri/</text>
+
+        <rect x="360" y="55" width="240" height="110" rx="6" fill="none" stroke="currentColor"/>
+        <text x="480" y="80" text-anchor="middle" font-size="14" fill="currentColor" font-weight="600">WebView2</text>
+        <text x="480" y="102" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">HTML · CSS · TypeScript</text>
+        <text x="480" y="118" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">draws the eye + popups</text>
+        <text x="480" y="134" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">Chromium rendering engine</text>
+        <text x="480" y="150" text-anchor="middle" class="diagram-text" font-size="10" fill="var(--accent)">src/</text>
+
+        <line x1="282" y1="110" x2="356" y2="110" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow2)"/>
+        <line x1="356" y1="122" x2="282" y2="122" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow2)"/>
+        <text x="319" y="97" text-anchor="middle" class="diagram-text" font-size="10" fill="var(--accent)">IPC</text>
+      </svg>
+      <figcaption>
+        One process, two runtimes. The Rust core never touches a pixel; WebView2 never
+        touches a file. Everything crosses through a narrow message bridge in the middle —
+        which is deliberate, and is what section 03 covers.
+      </figcaption>
+    </figure>
+    <aside class="note">
+      <strong>Why not Electron?</strong> Electron (Slack, VS Code, Discord) takes the same
+      "web UI, native backend" idea but ships its <em>own</em> copy of Chromium and Node.js
+      inside every installer — reliable, but every app pays the weight of a full browser
+      download. Tauri instead rents the browser engine Windows already has installed, so
+      Fairy's installer is a few megabytes, not a few hundred.
+    </aside>
+  </div>
+</section>
+
+<section id="s3">
+  <div class="num">03</div>
+  <div class="body">
+    <h2>How the two sides talk</h2>
+    <p>
+      Because the UI and the logic are different processes in different languages, they
+      can't just call each other's functions directly. Tauri gives them exactly two ways
+      to communicate, and Fairy uses both:
+    </p>
+    <p>
+      <strong>Commands</strong> are the frontend asking the backend for something and
+      waiting for an answer — the closest analogy is a very fast, purely local
+      <dfn class="term" title="Remote Procedure Call: calling a function that actually runs somewhere else, with the call/return machinery hidden from you.">RPC</dfn> call.
+      A Rust function marked <code>#[tauri::command]</code> becomes callable from
+      TypeScript as <code>invoke("command_name", args)</code>, which returns a
+      <code>Promise</code>. <code>get_flavor_lines</code>, <code>synthesize_flavor_line</code>,
+      and <code>report_eye_bounds</code> are all commands like this.
+    </p>
+    <p>
+      <strong>Events</strong> run the other way: the backend pushes information whenever
+      <em>it</em> decides something changed, without the frontend having asked. Fairy emits
+      one called <code>state_changed</code> every time anything about its state changes —
+      a reminder firing, a setting being updated — and the frontend just has a standing
+      subscription (<code>listen</code>) that reacts.
+    </p>
+    <figure>
+      <svg viewBox="0 0 640 260" role="img" aria-label="Sequence diagram: the frontend invokes get_flavor_lines and receives a return value, then the backend independently emits a state_changed event that the frontend was not waiting for.">
+        <defs>
+          <marker id="arrow3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <text x="130" y="24" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Frontend (TS)</text>
+        <text x="510" y="24" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Backend (Rust)</text>
+        <line x1="130" y1="36" x2="130" y2="240" stroke="currentColor" stroke-opacity="0.3" stroke-dasharray="3 3"/>
+        <line x1="510" y1="36" x2="510" y2="240" stroke="currentColor" stroke-opacity="0.3" stroke-dasharray="3 3"/>
+
+        <line x1="130" y1="70" x2="504" y2="70" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow3)"/>
+        <text x="320" y="62" text-anchor="middle" class="diagram-text" font-size="10.5" fill="currentColor">invoke("get_flavor_lines")</text>
+
+        <line x1="510" y1="105" x2="136" y2="105" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow3)"/>
+        <text x="320" y="97" text-anchor="middle" class="diagram-text" font-size="10.5" fill="currentColor">→ string[]</text>
+
+        <text x="320" y="145" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity="0.55">— sometime later, unprompted —</text>
+
+        <line x1="510" y1="180" x2="136" y2="180" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#arrow3)"/>
+        <text x="320" y="172" text-anchor="middle" class="diagram-text" font-size="10.5" fill="var(--accent)">emit("state_changed", state)</text>
+
+        <text x="130" y="205" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.75">renderState(state)</text>
+        <rect x="80" y="212" width="100" height="20" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.4"/>
+        <text x="130" y="226" text-anchor="middle" class="diagram-text" font-size="9.5" fill="currentColor" fill-opacity="0.75">redraw eye/popup</text>
+      </svg>
+      <figcaption>
+        Two shapes of message: a request-response pair the frontend initiates (solid), and
+        a push the backend initiates on its own schedule (violet, dashed) — the same pattern
+        as an HTTP call versus a WebSocket message.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="s4">
+  <div class="num">04</div>
+  <div class="body">
+    <h2>The illusion of a floating eye</h2>
+    <p>
+      Fairy's window has no title bar, no border, and no taskbar icon, floats above every
+      other window, and is only 460×220 pixels — configured directly in Tauri's window
+      settings, not something built by hand. That part's straightforward. The interesting
+      trick is what happens when nothing is supposed to be there: Fairy needs to let you
+      click <em>through</em> its window onto whatever's underneath, everywhere except the
+      small circle where the eye actually is.
+    </p>
+    <p>
+      Windows offers exactly one lever for this — a window can be made entirely
+      "click-through," meaning the OS delivers <em>no</em> mouse input to it at all, full
+      stop. That's a problem: if the window can't receive mouse events, it also can't
+      notice the mouse arriving to know when to turn itself back on. Fairy's fix is a
+      background Rust task that sidesteps the window entirely and asks Windows directly,
+      60 times a second, "where is the cursor right now?" — then compares that against the
+      eye's actual screen position (which the frontend reports any time layout changes) and
+      flips the window's click-through flag on or off accordingly.
+    </p>
+    <figure>
+      <svg viewBox="0 0 640 190" role="img" aria-label="A loop: every 60 milliseconds a Rust hover watcher reads the OS cursor position directly, compares it to the eye's reported bounds, and toggles whether the window ignores mouse input.">
+        <defs>
+          <marker id="arrow4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <rect x="16" y="70" width="150" height="54" rx="6" fill="none" stroke="currentColor"/>
+        <text x="91" y="92" text-anchor="middle" font-size="11.5" fill="currentColor">OS cursor position</text>
+        <text x="91" y="108" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity="0.65">(global, not window-scoped)</text>
+
+        <rect x="245" y="70" width="150" height="54" rx="6" fill="none" stroke="currentColor"/>
+        <text x="320" y="92" text-anchor="middle" font-size="11.5" fill="currentColor">Hover watcher</text>
+        <text x="320" y="108" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity="0.65">Rust background task</text>
+
+        <rect x="474" y="70" width="150" height="54" rx="6" fill="none" stroke="var(--accent)"/>
+        <text x="549" y="92" text-anchor="middle" font-size="11.5" fill="var(--accent)">Window's click-through flag</text>
+        <text x="549" y="108" text-anchor="middle" font-size="10" fill="var(--accent)" fill-opacity="0.8">on ↔ off</text>
+
+        <line x1="166" y1="97" x2="239" y2="97" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow4)"/>
+        <text x="202" y="88" text-anchor="middle" class="diagram-text" font-size="9.5" fill="currentColor">reads, every 60ms</text>
+
+        <line x1="395" y1="97" x2="468" y2="97" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow4)"/>
+        <text x="431" y="88" text-anchor="middle" class="diagram-text" font-size="9.5" fill="var(--accent)">toggles</text>
+
+        <path d="M320,124 L320,150 L549,150 L549,128" fill="none" stroke="currentColor" stroke-opacity="0.4" stroke-dasharray="3 3" marker-end="url(#arrow4)"/>
+        <text x="435" y="165" text-anchor="middle" class="diagram-text" font-size="9.5" fill="currentColor" fill-opacity="0.7">compares against reported eye bounds</text>
+      </svg>
+      <figcaption>
+        The window itself is blind to the mouse while click-through — the watcher is a
+        separate observer that polls the OS directly, so it can still see the cursor
+        coming and switch the window back on just in time.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="s5">
+  <div class="num">05</div>
+  <div class="body">
+    <h2>What Fairy is thinking</h2>
+    <p>
+      Rather than the frontend keeping its own copy of "is a reminder showing, what does it
+      say, which corner is the window in," all of that lives in one Rust struct —
+      <code>CompanionState</code> — and the UI's only real job is: whenever a fresh copy of
+      that state arrives, throw away any assumptions and redraw to match it exactly. This
+      is the same <dfn class="term" title="UI state lives in one place; the interface is a pure function of that state, redrawn whenever it changes, rather than hand-updated piecemeal.">single-source-of-truth</dfn>
+      pattern frameworks like React popularize — Fairy just hand-rolls it in a few dozen
+      lines rather than pulling in a framework, since the UI itself is small (one eye, one
+      popup).
+    </p>
+    <p>
+      Settings are a separate, longer-lived layer: whether voice is on, how often to remind
+      you to drink water, which screen corner to dock in. Those get written to an actual
+      JSON file on disk the moment you change them (via Tauri's storage plugin), so they
+      survive a restart — Fairy reads that file once at launch and otherwise treats it as
+      the settings UI's problem to keep in sync.
+    </p>
+  </div>
+</section>
+
+<section id="s6">
+  <div class="num">06</div>
+  <div class="body">
+    <h2>The scheduler</h2>
+    <p>
+      A background loop wakes up periodically and asks a short list of questions: has it
+      been long enough since the last water reminder? Is it the configured time of day for
+      a workout reminder? Has the mouse been untouched long enough to earn an idle "bark"?
+      This loop runs on Rust's <dfn class="term" title="A cooperative multitasking runtime — one or a few OS threads juggling many suspended tasks, resuming each only when it has work to do, so waiting on a timer or a network call doesn't block anything else.">async runtime</dfn> (Tokio),
+      the same underlying idea as JavaScript's event loop, just on the Rust side — nothing
+      about "wait, then check again" blocks anything else Fairy is doing.
+    </p>
+    <p>
+      When a reminder does fire, the scheduler doesn't just show text — it decides how long
+      the popup should stay up. With voice off, that's a fixed, generous reading time; with
+      voice on, it's the <em>actual measured length</em> of the synthesized clip, so the
+      popup never vanishes mid-sentence or lingers awkwardly after the audio's done. Either
+      way, the result is written into <code>CompanionState</code>, and — per section 05 —
+      the UI update happens automatically from there.
+    </p>
+  </div>
+</section>
+
+<section id="s7">
+  <div class="num">07</div>
+  <div class="body">
+    <h2>Teaching the fairy to talk</h2>
+    <p>
+      This is the most involved part of the codebase. The voice comes from
+      <strong>Supertonic</strong>, a small neural text-to-speech model distributed in
+      <dfn class="term" title="Open Neural Network Exchange — a standard file format for trained machine-learning models, so a model trained in one framework can run in a completely different runtime or language.">ONNX</dfn> format,
+      run through a Rust crate called <code>sherpa-onnx</code> that wraps a C++ inference
+      engine. That last part matters: crossing from Rust into C++ code and back is called
+      <dfn class="term" title="Foreign Function Interface — calling into code written in a different language, at the level of raw function calls and memory layout, with none of the calling language's usual safety guarantees.">FFI</dfn>,
+      and Rust's normal safety net (which turns most bugs into a clean, catchable error)
+      doesn't reach across that boundary — a crash originating on the C++ side can bring the
+      whole process down instantly, which is exactly what an earlier version of Fairy hit:
+      loading the model too early, before Windows had finished setting the app up, corrupted
+      enough state to crash on nearly every launch (see
+      <a href="field-notes.html#entry-2026-08-17-eager-load-crash">Field Notes</a> for the
+      full writeup).
+    </p>
+    <p>
+      The model itself is ~145MB, so it isn't bundled in the installer — Fairy downloads it
+      once, the first time you switch voice on, and checks the download's SHA-256 hash
+      against a value GitHub itself computed at upload time, so a corrupted or interfered-with
+      download is caught before it's ever loaded.
+    </p>
+    <h3>Then it gets run through a robot</h3>
+    <p>
+      Raw model output sounds clean and a little flat — a human voice, not the robotic
+      companion the character is modeled on. So every clip is run through a chain of
+      hand-written audio effects tuned to recreate that synthesized, mechanical vocal
+      character before anyone hears it: pitched up a few semitones, pushed through a
+      distortion waveshaper, <dfn class="term" title="Deliberately reducing the resolution (bit depth) of the audio signal for a rough, lo-fi digital texture — the same effect that makes old game consoles or 90s samplers sound the way they do.">bit-crushed</dfn>,
+      given a wobble (vibrato), and finished with a reverb built from short delay lines —
+      the same "comb and allpass filter" building blocks used in classic studio reverb
+      units — before a final safety pass makes sure nothing clips.
+    </p>
+    <figure>
+      <svg viewBox="0 0 700 260" role="img" aria-label="Flow diagram: dialogue text is looked up in a cache; a cache hit returns stored audio immediately, while a miss runs the text through the Supertonic ONNX model and a DSP effects chain before caching and returning the result. Either path ends as base64 audio sent to the frontend, played from a blob URL.">
+        <defs>
+          <marker id="arrow5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <rect x="10" y="105" width="90" height="46" rx="5" fill="none" stroke="currentColor"/>
+        <text x="55" y="132" text-anchor="middle" font-size="11.5" fill="currentColor">line text</text>
+
+        <rect x="140" y="105" width="110" height="46" rx="5" fill="none" stroke="currentColor"/>
+        <text x="195" y="126" text-anchor="middle" font-size="11" fill="currentColor">cache lookup</text>
+        <text x="195" y="140" text-anchor="middle" font-size="9.5" fill="currentColor" fill-opacity="0.6">hash(model+lang+text)</text>
+
+        <line x1="100" y1="128" x2="134" y2="128" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow5)"/>
+
+        <line x1="250" y1="118" x2="330" y2="60" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow5)"/>
+        <text x="270" y="80" font-size="9.5" class="diagram-text" fill="currentColor">hit</text>
+
+        <line x1="250" y1="138" x2="330" y2="196" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow5)"/>
+        <text x="266" y="185" font-size="9.5" class="diagram-text" fill="currentColor">miss</text>
+
+        <rect x="330" y="36" width="120" height="46" rx="5" fill="none" stroke="currentColor"/>
+        <text x="390" y="63" text-anchor="middle" font-size="11" fill="currentColor">cached WAV</text>
+
+        <rect x="330" y="173" width="130" height="46" rx="5" fill="none" stroke="currentColor"/>
+        <text x="395" y="192" text-anchor="middle" font-size="10.5" fill="currentColor">Supertonic model</text>
+        <text x="395" y="206" text-anchor="middle" font-size="9.5" fill="currentColor" fill-opacity="0.6">sherpa-onnx (FFI)</text>
+
+        <line x1="460" y1="196" x2="500" y2="196" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow5)"/>
+
+        <rect x="500" y="173" width="130" height="46" rx="5" fill="none" stroke="var(--accent)"/>
+        <text x="565" y="192" text-anchor="middle" font-size="10.5" fill="var(--accent)">DSP effects chain</text>
+        <text x="565" y="206" text-anchor="middle" font-size="9.5" fill="var(--accent)" fill-opacity="0.85">pitch · crush · reverb</text>
+
+        <path d="M565,173 L565,60 L450,59" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow5)"/>
+        <text x="580" y="130" text-anchor="middle" font-size="9" fill="currentColor" fill-opacity="0.55">writes to cache too</text>
+      </svg>
+      <figcaption>
+        Every line is only synthesized (and pushed through the effects chain) once per
+        model version — after that, both the in-memory cache and a folder on disk serve
+        it back instantly.
+      </figcaption>
+    </figure>
+    <p>
+      The finished clip is hand-encoded as a plain 16-bit WAV file, base64-encoded, and
+      sent to the frontend over the same command/response channel from section 03 — from
+      there, playing it is the browser's job, which is its own separate point of failure
+      (see <a href="field-notes.html#entry-2026-08-17-audio-csp">Field Notes</a> for a case
+      where that's exactly where a bug turned out to live).
+    </p>
+  </div>
+</section>
+
+<section id="s8">
+  <div class="num">08</div>
+  <div class="body">
+    <h2>From source to installer</h2>
+    <p>
+      Building Fairy is really two independent builds glued together by Tauri's own build
+      step. The TypeScript/HTML/CSS side is compiled and bundled by
+      <dfn class="term" title="A fast frontend build tool: a dev server for local work, and a production bundler that combines and minifies everything into static files.">Vite</dfn> —
+      the same category of tool used by most modern web frontends. The Rust side is
+      compiled by Cargo, Rust's standard build tool, into a single release-mode
+      <code>fairy.exe</code>. Tauri's build command runs both, in order, then embeds the
+      finished frontend files directly inside the executable — Fairy never reaches onto
+      disk or the network at runtime just to find its own UI.
+    </p>
+    <div class="stepper">
+      <div class="step"><span class="label">Frontend</span><span class="what">Vite compiles TS/HTML/CSS → static files</span></div>
+      <div class="step"><span class="label">Embed</span><span class="what">Those files get baked into the Rust binary</span></div>
+      <div class="step"><span class="label">Compile</span><span class="what">Cargo builds release-mode fairy.exe</span></div>
+      <div class="step"><span class="label">Package</span><span class="what">WiX → .msi, NSIS → setup.exe</span></div>
+    </div>
+    <p>
+      Two separate Windows packaging tools then wrap that one exe into two installer
+      formats side by side — an <code>.msi</code> (via WiX, the format enterprise
+      deployment tools expect) and a friendlier <code>_setup.exe</code> (via NSIS) — so
+      people can use whichever their situation calls for.
+    </p>
+    <p>
+      Both halves carry their own safety nets, run automatically on every change: the Rust
+      side has 56 unit tests plus <code>clippy</code> (Rust's linter, opinionated enough to
+      catch real bugs, not just style) and <code>rustfmt</code>; the TypeScript side has its
+      own test suite (Vitest), <code>eslint</code>, <code>prettier</code>, and the
+      TypeScript compiler's own type-checker (<code>tsc</code>) run in check-only mode.
+    </p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <span>Fairy — a Tauri + Rust + WebView2 desktop companion</span>
+  <span>Bug write-ups live separately in <a href="field-notes.html">Field Notes</a> · last updated 2026-08-17</span>
+</footer>
+
+</div>
+</body>
+</html>
