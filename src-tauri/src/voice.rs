@@ -46,6 +46,18 @@ const MODEL_FILES: &[&str] = &[
     "voice.bin",
 ];
 
+// Records each model file's byte size at the time it was last verified as
+// correctly extracted — cheap enough (a handful of stat() calls) to check
+// on every `is_model_ready`, unlike re-hashing ~145MB. Exists because a
+// single model file was found silently truncated on disk weeks after a
+// successful download (cause never fully pinned down — a conflicting
+// concurrent extraction is the leading theory), and nothing detected it:
+// `is_file()` alone can't tell a truncated file from a whole one, so the
+// corruption sat undetected until the disk cache that was masking it
+// happened to run dry. Named with a leading dot so it doesn't collide with
+// anything sherpa-onnx's own archive might ever ship.
+const MODEL_MANIFEST_FILE: &str = ".manifest.json";
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DownloadProgress {
@@ -76,9 +88,55 @@ fn cache_dir(app: &AppHandle) -> PathBuf {
     app_data_dir(app).join("voice_cache")
 }
 
+/// True only if every model file exists *and* its size matches what was
+/// recorded the last time this directory was verified as a correct
+/// extraction — catches a truncated/corrupted file that `.is_file()` alone
+/// would miss, cheaply enough to call before every synthesis attempt.
+///
+/// If no manifest exists yet (installs made before this check existed),
+/// one is generated from whatever's on disk right now rather than forcing
+/// a ~145MB re-download for everyone upgrading — this only protects
+/// against corruption *from this point forward*. A fresh download always
+/// gets a manifest written from the just-verified extraction (see
+/// `download_and_install_model_blocking`), so this lazy path is purely a
+/// one-time backward-compatibility step for pre-existing installs.
 pub fn is_model_ready(app: &AppHandle) -> bool {
-    let dir = model_dir(app);
-    MODEL_FILES.iter().all(|f| dir.join(f).is_file())
+    model_dir_ready(&model_dir(app))
+}
+
+fn model_dir_ready(dir: &Path) -> bool {
+    if !MODEL_FILES.iter().all(|f| dir.join(f).is_file()) {
+        return false;
+    }
+    let manifest = read_model_manifest(dir).or_else(|| write_model_manifest(dir));
+    let Some(manifest) = manifest else {
+        return false;
+    };
+    MODEL_FILES.iter().all(|f| {
+        fs::metadata(dir.join(f))
+            .map(|meta| manifest.get(*f) == Some(&meta.len()))
+            .unwrap_or(false)
+    })
+}
+
+fn read_model_manifest(dir: &Path) -> Option<HashMap<String, u64>> {
+    let contents = fs::read_to_string(dir.join(MODEL_MANIFEST_FILE)).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+/// Records the current on-disk size of every model file. Called both as
+/// the one-time backward-compat path above, and — the path that actually
+/// matters for new installs — right after a fresh download's extraction,
+/// so the recorded sizes always trace back to a checksum-verified archive.
+fn write_model_manifest(dir: &Path) -> Option<HashMap<String, u64>> {
+    let mut manifest = HashMap::new();
+    for file in MODEL_FILES {
+        let size = fs::metadata(dir.join(file)).ok()?.len();
+        manifest.insert((*file).to_string(), size);
+    }
+    let json = serde_json::to_string(&manifest).ok()?;
+    fs::write(dir.join(MODEL_MANIFEST_FILE), json).ok()?;
+    Some(manifest)
 }
 
 // ---------- Model provisioning ----------
@@ -135,6 +193,10 @@ fn download_and_install_model_blocking(app: &AppHandle) -> Result<(), String> {
         verify_checksum(&archive_bytes, MODEL_ARCHIVE_SHA256)?;
     }
     extract_archive(app, &archive_bytes)?;
+    // Written from the extraction that was just verified via the archive
+    // checksum above — every later `is_model_ready` check traces back to
+    // this known-good moment, not just "a file happened to exist".
+    write_model_manifest(&model_dir(app)).ok_or("failed to record model manifest")?;
     Ok(())
 }
 
@@ -714,6 +776,94 @@ pub fn get_flavor_lines() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A unique scratch directory under the OS temp dir, cleaned up when
+    /// dropped — stands in for a real model directory without pulling in a
+    /// tempdir crate this project otherwise has no use for.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "fairy-voice-test-{label}-{:?}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write_fake_model_files(dir: &Path, sizes: &[(&str, usize)]) {
+        for (name, size) in sizes {
+            fs::write(dir.join(name), vec![0u8; *size]).unwrap();
+        }
+    }
+
+    fn fake_model_sizes() -> Vec<(&'static str, usize)> {
+        MODEL_FILES.iter().map(|f| (*f, 128)).collect()
+    }
+
+    #[test]
+    fn model_dir_ready_false_when_files_missing() {
+        let dir = TempDir::new("missing-files");
+        assert!(!model_dir_ready(&dir.0));
+    }
+
+    #[test]
+    fn model_dir_ready_generates_a_manifest_and_succeeds_for_a_preexisting_install() {
+        // Simulates an install made before this check existed: files
+        // present, no manifest yet. Should self-heal rather than fail.
+        let dir = TempDir::new("preexisting");
+        write_fake_model_files(&dir.0, &fake_model_sizes());
+
+        assert!(model_dir_ready(&dir.0));
+        assert!(dir.0.join(MODEL_MANIFEST_FILE).is_file());
+    }
+
+    #[test]
+    fn model_dir_ready_true_when_sizes_match_manifest() {
+        let dir = TempDir::new("matching");
+        write_fake_model_files(&dir.0, &fake_model_sizes());
+        write_model_manifest(&dir.0).unwrap();
+
+        assert!(model_dir_ready(&dir.0));
+    }
+
+    #[test]
+    fn model_dir_ready_false_when_a_file_is_truncated_after_manifest_was_written() {
+        // The actual bug this exists for: a file on disk silently ends up
+        // smaller than what was recorded when it was last known-good.
+        let dir = TempDir::new("truncated");
+        write_fake_model_files(&dir.0, &fake_model_sizes());
+        write_model_manifest(&dir.0).unwrap();
+
+        let corrupted_file = MODEL_FILES[2]; // vector_estimator.int8.onnx
+        fs::write(dir.0.join(corrupted_file), vec![0u8; 64]).unwrap();
+
+        assert!(!model_dir_ready(&dir.0));
+    }
+
+    #[test]
+    fn model_dir_ready_self_heals_when_manifest_is_unparseable() {
+        // An unreadable manifest (rather than a missing one) is treated the
+        // same way: there's no old known-good state to fall back to either
+        // way, so it's regenerated from whatever's on disk now, same as the
+        // preexisting-install case above.
+        let dir = TempDir::new("bad-manifest");
+        write_fake_model_files(&dir.0, &fake_model_sizes());
+        fs::write(dir.0.join(MODEL_MANIFEST_FILE), b"not json").unwrap();
+
+        assert!(model_dir_ready(&dir.0));
+    }
 
     #[test]
     fn wav_header_roundtrip_reports_correct_duration() {
