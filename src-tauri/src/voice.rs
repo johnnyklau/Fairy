@@ -16,6 +16,9 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 const SPEAKER_ID: i32 = 0;
+// <1.0 slower, >1.0 faster; the model's natural pace (1.0) read as too
+// fast for a wellness reminder meant to actually be heard and absorbed.
+const SPEAKING_SPEED: f32 = 0.8;
 pub const SYNTHESIS_TIMEOUT: Duration = Duration::from_secs(3);
 // Bounds the *entire* model download (DNS, connect, and reading the ~145MB
 // body), not just connecting — ureq's per-request `.timeout()` has no
@@ -28,6 +31,13 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 const PEAK_CEILING: f32 = 0.98;
 
 const MODEL_DIR_NAME: &str = "sherpa-onnx-supertonic-3-tts-int8-2026-05-11";
+// Bumped whenever a synthesis parameter this file controls — speed, pitch,
+// anything in the effects chain — changes. Folded into the cache key
+// alongside MODEL_DIR_NAME (see cache_key's own doc comment) so a tuning
+// change can't silently keep serving audio generated under the old
+// settings; the alternative would be remembering to clear voice_cache by
+// hand every time one of these gets adjusted.
+const SYNTHESIS_PARAMS_VERSION: &str = "2";
 const MODEL_ARCHIVE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2";
 // Sourced from GitHub's release API `digest` field for this asset
 // (`GET /repos/k2-fsa/sherpa-onnx/releases/tags/tts-models`), computed by
@@ -280,12 +290,14 @@ fn extract_archive(app: &AppHandle, archive_bytes: &[u8]) -> Result<(), String> 
 static TTS_ENGINE: OnceLock<Mutex<Option<OfflineTts>>> = OnceLock::new();
 static MEM_CACHE: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
 
-/// Includes `model_id` (in practice always `MODEL_DIR_NAME`) so a future
-/// model swap can't silently keep serving audio cached from the old model —
-/// bumping `MODEL_DIR_NAME` changes every key, making the old on-disk/
-/// in-memory entries unreachable dead weight rather than wrongly-reused
-/// hits. Taken as a parameter (not read from the constant directly) so this
-/// is unit-testable without depending on the real model name.
+/// Includes `model_id` (in practice always `MODEL_DIR_NAME` joined with
+/// `SYNTHESIS_PARAMS_VERSION`) so a future model swap *or* a tuning change
+/// to speed/pitch/the effects chain can't silently keep serving audio
+/// generated under the old settings — bumping either half changes every
+/// key, making the old on-disk/in-memory entries unreachable dead weight
+/// rather than wrongly-reused hits. Taken as a parameter (not read from the
+/// constants directly) so this is unit-testable without depending on the
+/// real model name.
 fn cache_key(model_id: &str, text: &str, language: VoiceLanguage) -> String {
     let mut hasher = Sha256::new();
     hasher.update(model_id.as_bytes());
@@ -324,7 +336,11 @@ pub async fn synthesize(
         return None;
     }
 
-    let key = cache_key(MODEL_DIR_NAME, text, language);
+    let key = cache_key(
+        &format!("{MODEL_DIR_NAME}:{SYNTHESIS_PARAMS_VERSION}"),
+        text,
+        language,
+    );
     let canonical_bytes = if let Some(bytes) = mem_cache_get(&key) {
         tracing::debug!(text, "synthesize: memory cache hit");
         bytes
@@ -457,7 +473,7 @@ fn synthesize_blocking(app: &AppHandle, text: &str, language: VoiceLanguage) -> 
     let gen_config = GenerationConfig {
         sid: SPEAKER_ID,
         num_steps: 8,
-        speed: 1.0,
+        speed: SPEAKING_SPEED,
         extra: Some(extra),
         ..Default::default()
     };
