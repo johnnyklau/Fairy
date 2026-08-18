@@ -57,6 +57,10 @@ export function setFlavorPopupVisible(visible: boolean): Promise<void> {
   return invoke(IpcChannel.setFlavorPopupVisible, { visible });
 }
 
+export function installUpdate(): Promise<void> {
+  return invoke(IpcChannel.installUpdate);
+}
+
 function onStateChanged(
   callback: (state: CompanionState) => void,
 ): Promise<UnlistenFn> {

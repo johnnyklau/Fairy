@@ -32,6 +32,7 @@ function stateWith(overrides: Partial<CompanionState>): CompanionState {
     activeReminder: null,
     eye: { glowIntensity: "low" },
     window: { clickThrough: true, corner: "top-left" },
+    updateAvailable: null,
     ...overrides,
   };
 }
@@ -358,6 +359,122 @@ describe("renderer", () => {
     await vi.waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("set_flavor_popup_visible", {
         visible: false,
+      });
+    });
+  });
+
+  it("shows the update-available popup with the version when updateAvailable is set", async () => {
+    const { renderState } = await setup();
+    renderState(
+      stateWith({ updateAvailable: { version: "0.3.0", notes: "" } }),
+    );
+    expect(
+      document.querySelector(".popup")?.classList.contains("visible"),
+    ).toBe(true);
+    expect(document.querySelector(".popup-text")?.textContent).toContain(
+      "0.3.0",
+    );
+  });
+
+  it("only auto-shows the update popup once, even if idle renderState fires again", async () => {
+    const { renderState } = await setup();
+    const withUpdate = stateWith({
+      updateAvailable: { version: "0.3.0", notes: "" },
+    });
+    renderState(withUpdate);
+    // Dismiss it, as if a reminder briefly interrupted then cleared.
+    renderState(
+      stateWith({
+        activeReminder: { type: "water", message: "x", triggeredAt: 1 },
+      }),
+    );
+    renderState(stateWith({ activeReminder: null }));
+
+    // Back to idle with updateAvailable still set — should not re-show,
+    // since Fairy only asks once per launch, not on every idle re-render.
+    renderState(withUpdate);
+    expect(
+      document.querySelector(".popup")?.classList.contains("visible"),
+    ).toBe(false);
+  });
+
+  it("a reminder firing while the update popup is showing replaces it, not stacks on top", async () => {
+    const { renderState } = await setup();
+    renderState(
+      stateWith({ updateAvailable: { version: "0.3.0", notes: "" } }),
+    );
+    renderState(
+      stateWith({
+        activeReminder: {
+          type: "water",
+          message: "Time to drink some water, master.",
+          triggeredAt: 1,
+        },
+      }),
+    );
+    expect(document.querySelector(".popup-text")?.textContent).toBe(
+      "Time to drink some water, master.",
+    );
+  });
+
+  it("clicking the eye while the update popup is showing installs the update instead of a flavor line", async () => {
+    invokeMock.mockImplementation((channel: string) => {
+      if (channel === "get_flavor_lines")
+        return Promise.resolve(DEFAULT_FLAVOR_LINES);
+      if (channel === "install_update") return Promise.resolve(undefined);
+      return Promise.resolve(undefined);
+    });
+
+    const { renderState } = await setup();
+    renderState(
+      stateWith({ updateAvailable: { version: "0.3.0", notes: "" } }),
+    );
+
+    document
+      .querySelector(".eye-wrap")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("install_update");
+    });
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "synthesize_flavor_line",
+      expect.anything(),
+    );
+  });
+
+  it("shows a failure message and stops treating clicks as install attempts when install_update rejects", async () => {
+    invokeMock.mockImplementation((channel: string) => {
+      if (channel === "get_flavor_lines")
+        return Promise.resolve(DEFAULT_FLAVOR_LINES);
+      if (channel === "install_update")
+        return Promise.reject(new Error("network error"));
+      return Promise.resolve(undefined);
+    });
+
+    const { renderState } = await setup();
+    renderState(
+      stateWith({ updateAvailable: { version: "0.3.0", notes: "" } }),
+    );
+    document
+      .querySelector(".eye-wrap")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(document.querySelector(".popup-text")?.textContent).toMatch(
+        /failed/i,
+      );
+    });
+
+    // A further click is a normal flavor-line click again, not another
+    // install attempt — updatePromptActive was cleared on the first click.
+    invokeMock.mockClear();
+    document
+      .querySelector(".eye-wrap")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("synthesize_flavor_line", {
+        index: expect.any(Number),
       });
     });
   });

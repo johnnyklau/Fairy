@@ -1,5 +1,6 @@
 import {
   getFlavorLines,
+  installUpdate,
   reportEyeBounds,
   setFlavorPopupVisible,
   synthesizeFlavorLine,
@@ -21,6 +22,11 @@ const FLAVOR_DISPLAY_MS = 6500;
 // Mirrors Behavior's AUDIO_TAIL_BUFFER in src-tauri/src/behavior.rs — keep
 // both in sync if either changes.
 const AUDIO_TAIL_BUFFER_MS = 500;
+// How long the "update available" popup stays up before giving up for this
+// launch — longer than a flavor line's display time since this is a
+// decision, not a one-liner to skim. Missing it isn't a big deal: Fairy
+// asks again next launch, not on a repeating timer within a session.
+const UPDATE_PROMPT_DISPLAY_MS = 20000;
 
 let mounted = false;
 let container: HTMLDivElement;
@@ -29,6 +35,14 @@ let eyeEl: SVGSVGElement;
 let popupEl: HTMLDivElement;
 let flavorTimeout: ReturnType<typeof setTimeout> | undefined;
 let lastPlayedReminderAt: number | null = null;
+// Whether the one-time update-available popup has already been shown this
+// launch (never re-shown even if it times out unclicked — see
+// UPDATE_PROMPT_DISPLAY_MS) and whether it's currently on screen, which is
+// what the eye-click handler checks to decide "install the update" vs. the
+// usual "show a flavor line".
+let updatePromptShown = false;
+let updatePromptActive = false;
+let updateHideTimeout: ReturnType<typeof setTimeout> | undefined;
 // Fetched once at startup from src-tauri/src/dialogues.rs (the single
 // source of truth for dialogue content) via getFlavorLines, then picked
 // from locally on every click — same instant response as a hardcoded
@@ -57,6 +71,10 @@ export function initRenderer(): void {
   root.appendChild(container);
 
   eyeWrap.addEventListener("click", () => {
+    if (updatePromptActive) {
+      void handleUpdateClick();
+      return;
+    }
     void handleFlavorClick();
   });
 
@@ -104,6 +122,25 @@ async function handleFlavorClick(): Promise<void> {
   }
 }
 
+// Fires instead of handleFlavorClick while the update-available popup is
+// showing (see renderState). Install failures (no network, bad signature)
+// degrade to a brief message rather than leaving "Updating…" up forever —
+// same "fail quietly" contract voice synthesis already follows. On success
+// there's nothing further to do here: src-tauri/src/updater.rs's
+// install_update relaunches the whole process into the new version.
+async function handleUpdateClick(): Promise<void> {
+  updatePromptActive = false;
+  clearTimeout(updateHideTimeout);
+  setPopupText(popupEl, "Updating…");
+
+  try {
+    await installUpdate();
+  } catch {
+    setPopupText(popupEl, "Update failed — try again next launch.");
+    setTimeout(() => hidePopup(popupEl), FLAVOR_DISPLAY_MS);
+  }
+}
+
 // The only source of truth Shell uses for hover/click-through hit-testing —
 // see report_eye_bounds in src-tauri/src/shell.rs. Re-report whenever
 // layout could have moved the eye (e.g. anchor-right toggling), so a CSS
@@ -125,6 +162,12 @@ export function renderState(state: CompanionState): void {
   setEyeGlowHigh(eyeEl, state.eye.glowIntensity === "high");
 
   if (state.activeReminder) {
+    // Reminders always take the popup over an update prompt — if one was
+    // showing, drop it; clicking now falls back to the usual flavor-line
+    // behavior rather than silently doing nothing.
+    updatePromptActive = false;
+    clearTimeout(updateHideTimeout);
+
     setPopupText(popupEl, state.activeReminder.message);
     showPopup(popupEl);
     // renderState can be called repeatedly for the same active reminder
@@ -137,7 +180,25 @@ export function renderState(state: CompanionState): void {
       lastPlayedReminderAt = state.activeReminder.triggeredAt;
       playBase64Wav(state.activeReminder.audio.base64Wav);
     }
-  } else {
+    return;
+  }
+
+  if (state.updateAvailable && !updatePromptShown) {
+    updatePromptShown = true;
+    updatePromptActive = true;
+    setPopupText(
+      popupEl,
+      `A new version of Fairy is available (v${state.updateAvailable.version}). Click to update.`,
+    );
+    showPopup(popupEl);
+    updateHideTimeout = setTimeout(() => {
+      updatePromptActive = false;
+      hidePopup(popupEl);
+    }, UPDATE_PROMPT_DISPLAY_MS);
+    return;
+  }
+
+  if (!updatePromptActive) {
     hidePopup(popupEl);
   }
 }

@@ -17,6 +17,11 @@ export type GlowIntensity = "low" | "high";
 export type ScreenCorner =
   "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
+export interface UpdateInfo {
+  version: string;
+  notes: string;
+}
+
 export interface CompanionState {
   mode: "idle" | "reminder" | "settingsOpen";
   activeReminder: ActiveReminder | null;
@@ -27,6 +32,7 @@ export interface CompanionState {
     clickThrough: boolean;
     corner: ScreenCorner;
   };
+  updateAvailable: UpdateInfo | null;
 }
 
 export interface Settings {
@@ -97,4 +103,9 @@ export const IpcChannel = {
   synthesizeFlavorLine: "synthesize_flavor_line",
   getFlavorLines: "get_flavor_lines",
   setFlavorPopupVisible: "set_flavor_popup_visible",
+  // - installUpdate: downloads, installs, and relaunches into the update
+  //   found by the launch-time check in src-tauri/src/updater.rs. Only
+  //   meaningful while state.updateAvailable is set — see Renderer's
+  //   click-routing logic.
+  installUpdate: "install_update",
 } as const;

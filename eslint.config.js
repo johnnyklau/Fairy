@@ -12,5 +12,11 @@ export default tseslint.config(
       globals: { ...globals.browser },
     },
   },
+  {
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
   eslintConfigPrettier,
 );

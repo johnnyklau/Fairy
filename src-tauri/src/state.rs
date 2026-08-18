@@ -56,6 +56,17 @@ struct WindowState {
     corner: ScreenCorner,
 }
 
+/// Frontend-facing summary of a pending update — deliberately separate from
+/// `updater.rs`'s `PENDING_UPDATE` static, which holds the actual
+/// `tauri_plugin_updater::Update` (signature/download internals, never
+/// meant to reach the frontend).
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInfo {
+    pub version: String,
+    pub notes: String,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompanionState {
@@ -63,6 +74,7 @@ pub struct CompanionState {
     active_reminder: Option<ActiveReminder>,
     eye: EyeState,
     window: WindowState,
+    update_available: Option<UpdateInfo>,
 }
 
 impl Default for CompanionState {
@@ -77,6 +89,7 @@ impl Default for CompanionState {
                 click_through: true,
                 corner: ScreenCorner::TopRight,
             },
+            update_available: None,
         }
     }
 }
@@ -313,6 +326,17 @@ pub fn set_window_corner(app: &AppHandle, corner: ScreenCorner) {
     let state_handle = app.state::<AppState>();
     let mut companion = state_handle.companion.lock().unwrap();
     companion.window.corner = corner;
+    emit_state_changed(app, &companion);
+}
+
+/// Called once, from `updater::maybe_check_for_update`, when a launch-time
+/// check finds a newer release. Renderer shows this in the same popup
+/// reminders/flavor-lines use, and turns the next eye click into
+/// `install_update` instead of a flavor line.
+pub fn set_update_available(app: &AppHandle, info: UpdateInfo) {
+    let state_handle = app.state::<AppState>();
+    let mut companion = state_handle.companion.lock().unwrap();
+    companion.update_available = Some(info);
     emit_state_changed(app, &companion);
 }
 

@@ -17,6 +17,7 @@ const sampleState: CompanionState = {
   activeReminder: null,
   eye: { glowIntensity: "low" },
   window: { clickThrough: true, corner: "top-right" },
+  updateAvailable: null,
 };
 
 describe("state/initState", () => {
@@ -91,6 +92,15 @@ describe("state/initState", () => {
 
     expect(invokeMock).toHaveBeenCalledWith("get_flavor_lines");
     expect(result).toEqual(["Yes, master?", "Boop."]);
+  });
+
+  it("installUpdate invokes install_update", async () => {
+    invokeMock.mockResolvedValue(undefined);
+
+    const { installUpdate } = await import("./index");
+    await installUpdate();
+
+    expect(invokeMock).toHaveBeenCalledWith("install_update");
   });
 
   it("does not require the snapshot fetch to resolve before subscribing", async () => {

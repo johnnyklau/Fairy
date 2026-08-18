@@ -3,6 +3,7 @@ mod dialogues;
 mod settings;
 mod shell;
 mod state;
+mod updater;
 mod voice;
 
 use tauri::Manager;
@@ -47,6 +48,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state::AppState::default())
         .invoke_handler(tauri::generate_handler![
             settings::get_settings,
@@ -58,6 +60,7 @@ pub fn run() {
             state::get_state,
             voice::synthesize_flavor_line,
             voice::get_flavor_lines,
+            updater::install_update,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -71,6 +74,7 @@ pub fn run() {
             shell::start_hover_watcher(handle.clone());
             behavior::start_scheduler(handle.clone());
             voice::maybe_start_model_download(&handle, &settings.voice);
+            updater::maybe_check_for_update(handle.clone());
             // NOT calling voice::maybe_eager_load here anymore: loading the
             // ONNX model this early in .setup() (crossing into sherpa-
             // onnx's FFI while WebView2/window/COM init is still settling)
