@@ -170,6 +170,19 @@ fn write_model_manifest(dir: &Path) -> Option<HashMap<String, u64>> {
 
 // ---------- Model provisioning ----------
 
+/// Guards against two overlapping downloads. `maybe_start_model_download`
+/// is called from `settings::update_settings` on *every* settings change,
+/// not just voice ones — without this, changing anything else (position,
+/// autostart, volume) while a download was already in flight would spawn a
+/// second `tar::Archive::unpack` into the same directory, since
+/// `is_model_ready` alone stays false for the whole download and can't
+/// tell "not ready yet" apart from "not ready, already being fixed".
+/// Concurrent, uncoordinated extractions into the same files is exactly
+/// the leading theory (see `SYNTHESIS_PARAMS_VERSION`'s sibling comment on
+/// `MODEL_MANIFEST_FILE`) for a real corruption incident this project
+/// already hit once.
+static MODEL_DOWNLOAD_IN_FLIGHT: OnceLock<Mutex<bool>> = OnceLock::new();
+
 /// Fire-and-forget: kicks off a background download if voice was just
 /// enabled and the model isn't present yet. Mirrors the
 /// `apply_window_position`/`apply_autostart` side-effect pattern already
@@ -178,12 +191,31 @@ pub fn maybe_start_model_download(app: &AppHandle, voice: &VoiceSettings) {
     if !voice.enabled || is_model_ready(app) {
         return;
     }
+
+    let flag = MODEL_DOWNLOAD_IN_FLIGHT.get_or_init(|| Mutex::new(false));
+    {
+        let Ok(mut in_flight) = flag.lock() else {
+            return;
+        };
+        if *in_flight {
+            tracing::debug!("voice model download already in flight, not starting another");
+            return;
+        }
+        *in_flight = true;
+    }
+
     tracing::info!("voice model not ready, starting background download");
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         match download_and_install_model(&app).await {
             Ok(()) => tracing::info!("voice model download completed"),
             Err(err) => tracing::error!(error = %err, "voice model download failed"),
+        }
+        if let Ok(mut in_flight) = MODEL_DOWNLOAD_IN_FLIGHT
+            .get_or_init(|| Mutex::new(false))
+            .lock()
+        {
+            *in_flight = false;
         }
     });
 }
@@ -194,7 +226,7 @@ pub fn maybe_start_model_download(app: &AppHandle, voice: &VoiceSettings) {
 /// `maybe_start_model_download`, and the first synthesis call after a
 /// download completes just lazy-loads normally).
 pub fn maybe_eager_load(app: &AppHandle, voice: &VoiceSettings) {
-    if !voice.enabled || !is_model_ready(app) {
+    if !voice.enabled || !is_model_ready(app) || tts_already_loaded() {
         return;
     }
     let app = app.clone();
@@ -440,6 +472,16 @@ fn build_tts_config(dir: &Path) -> OfflineTtsConfig {
         },
         ..Default::default()
     }
+}
+
+/// Cheap pre-check so `maybe_eager_load` — called from `update_settings` on
+/// *every* settings change, not just voice ones — doesn't spawn a blocking
+/// task just to have `ensure_tts_loaded` immediately no-op. A lock-and-check
+/// is a fraction of the cost of a thread-pool spawn.
+fn tts_already_loaded() -> bool {
+    TTS_ENGINE
+        .get()
+        .is_some_and(|cell| cell.lock().map(|guard| guard.is_some()).unwrap_or(false))
 }
 
 fn ensure_tts_loaded(app: &AppHandle) -> bool {
