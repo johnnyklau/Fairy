@@ -45,6 +45,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # sherpa-onnx-sys's build.rs downloads its prebuilt static libs
+          # into target/sherpa-onnx-prebuilt, outside Cargo's own tracked
+          # build-output layout. Without this, rust-cache restores the
+          # *build script's cached fingerprint* (which tells Cargo "already
+          # ran, here's the -L path it printed last time") but never
+          # restores the directory that path points to, since it isn't
+          # part of target/{debug,release}/{build,deps,.fingerprint}. Cargo
+          # then trusts the stale fingerprint, skips rerunning build.rs,
+          # and the linker fails to find the library that was never
+          # actually restored. Explicitly caching this directory keeps it
+          # in sync with the fingerprint that references it.
+          cache-directories: src-tauri/target/sherpa-onnx-prebuilt
 
       - name: Format check
         working-directory: src-tauri
