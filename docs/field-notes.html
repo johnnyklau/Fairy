@@ -351,7 +351,7 @@
         </p>
         <div class="stats">
           <div class="stat">
-            <span class="n">3</span><span class="label">entries</span>
+            <span class="n">4</span><span class="label">entries</span>
           </div>
           <div class="stat">
             <span class="n">v0.2.0</span
@@ -361,6 +361,357 @@
       </header>
 
       <main>
+        <article class="entry" id="entry-2026-08-19-stale-linker-cache">
+          <div class="entry-head">
+            <time datetime="2026-08-19">2026-08-19</time>
+            <h2>
+              CI's "failing test" was actually a linker that couldn't find a
+              library CI itself had just deleted
+            </h2>
+          </div>
+          <div class="tags">
+            <span class="tag">ci</span>
+            <span class="tag">caching</span>
+            <span class="tag">ffi</span>
+          </div>
+
+          <dl class="facts">
+            <dt>Symptom</dt>
+            <dd>
+              GitHub Actions' backend job failed on <code>cargo test</code>,
+              deterministically, on every run — while all 62 tests passed
+              locally in both debug and release.
+            </dd>
+            <dt>Looked like</dt>
+            <dd>
+              A real test failure or a flake — the run only reported "Process
+              completed with exit code 1," and the actual log text turned out to
+              require signing in to GitHub to view, closing off every
+              unauthenticated way of reading it.
+            </dd>
+            <dt>Actually was</dt>
+            <dd>
+              Not a test failure at all: a link error.
+              <code>sherpa-onnx-sys</code>'s build script trusted a cache
+              restore that only brought back <em>half</em> of what it needed.
+            </dd>
+            <dt>Fix</dt>
+            <dd>
+              Cache the actual downloaded library directory, and force that one
+              crate's build fingerprint to always re-verify rather than be
+              trusted blindly.
+            </dd>
+          </dl>
+
+          <p>
+            With the exact log text unreachable, the first real break came from
+            asking directly: once someone signed-in pasted the actual compiler
+            output, it read
+            <code
+              >could not find native static library "sherpa-onnx-c-api", perhaps
+              an -L flag is missing?</code
+            >
+            — a linker error, not a test assertion. That immediately explained a
+            detail that had looked like noise before: the <code>Clippy</code>
+            step, running moments earlier in the same job, passed every time.
+            Clippy checks code without performing the final link step; only
+            <code>cargo test</code> actually needs the real library on disk.
+          </p>
+          <p>
+            <code>sherpa-onnx-sys</code>'s build script downloads a prebuilt
+            static-library archive into
+            <code>target/sherpa-onnx-prebuilt/</code>, then prints a
+            <code>cargo:rustc-link-search</code> path pointing at it — and on
+            the <em>next</em> build, if that directory merely exists, it skips
+            re-downloading entirely. That directory sits outside Cargo's own
+            tracked build layout, so <code>Swatinem/rust-cache</code> was
+            restoring Cargo's own record of the build script's prior output (the
+            <code>-L</code> path it printed last time) without restoring the
+            folder that path pointed to. Cargo saw a fingerprint claiming
+            nothing had changed, skipped rerunning the build script, and the
+            linker went looking for files that had never come back from cache at
+            all.
+          </p>
+
+          <figure>
+            <svg
+              viewBox="0 0 700 280"
+              role="img"
+              aria-label="rust-cache restores Cargo's build-script fingerprint, which claims the download already happened. Clippy does not need to link, so it passes regardless. Test needs the actual library directory, which the cache restore never brought back, so the linker fails to find it."
+            >
+              <defs>
+                <marker
+                  id="arrow8"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+                </marker>
+                <marker
+                  id="arrow8warn"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M0,0 L10,5 L0,10 z" fill="var(--accent-warm)" />
+                </marker>
+              </defs>
+
+              <rect
+                x="10"
+                y="20"
+                width="140"
+                height="42"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="80"
+                y="45"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="currentColor"
+              >
+                rust-cache restore
+              </text>
+
+              <line
+                x1="150"
+                y1="41"
+                x2="196"
+                y2="41"
+                stroke="currentColor"
+                stroke-width="1.5"
+                marker-end="url(#arrow8)"
+              />
+
+              <rect
+                x="200"
+                y="20"
+                width="230"
+                height="42"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="315"
+                y="38"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="currentColor"
+              >
+                fingerprint: "already ran"
+              </text>
+              <text
+                x="315"
+                y="52"
+                text-anchor="middle"
+                font-size="9"
+                fill="currentColor"
+                fill-opacity="0.6"
+              >
+                trusts old -L path, doesn't check it
+              </text>
+
+              <line
+                x1="260"
+                y1="62"
+                x2="100"
+                y2="110"
+                stroke="currentColor"
+                stroke-width="1.5"
+                marker-end="url(#arrow8)"
+              />
+              <rect
+                x="30"
+                y="112"
+                width="140"
+                height="38"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="100"
+                y="135"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="currentColor"
+              >
+                Clippy
+              </text>
+              <line
+                x1="100"
+                y1="150"
+                x2="100"
+                y2="184"
+                stroke="currentColor"
+                stroke-width="1.5"
+                marker-end="url(#arrow8)"
+              />
+              <rect
+                x="30"
+                y="186"
+                width="140"
+                height="38"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="100"
+                y="205"
+                text-anchor="middle"
+                font-size="9.5"
+                fill="currentColor"
+              >
+                no linking needed
+              </text>
+              <text
+                x="100"
+                y="218"
+                text-anchor="middle"
+                font-size="10"
+                fill="currentColor"
+                font-weight="600"
+              >
+                passes ✓
+              </text>
+
+              <line
+                x1="370"
+                y1="62"
+                x2="500"
+                y2="110"
+                stroke="var(--accent-warm)"
+                stroke-width="1.5"
+                marker-end="url(#arrow8warn)"
+              />
+              <rect
+                x="420"
+                y="112"
+                width="220"
+                height="38"
+                rx="5"
+                fill="none"
+                stroke="var(--accent-warm)"
+              />
+              <text
+                x="530"
+                y="135"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="var(--accent-warm)"
+              >
+                Test — needs full link
+              </text>
+              <line
+                x1="530"
+                y1="150"
+                x2="530"
+                y2="184"
+                stroke="var(--accent-warm)"
+                stroke-width="1.5"
+                marker-end="url(#arrow8warn)"
+              />
+              <rect
+                x="410"
+                y="186"
+                width="240"
+                height="38"
+                rx="5"
+                fill="none"
+                stroke="var(--accent-warm)"
+              />
+              <text
+                x="530"
+                y="206"
+                text-anchor="middle"
+                font-size="9.5"
+                fill="var(--accent-warm)"
+              >
+                target/sherpa-onnx-prebuilt
+              </text>
+              <text
+                x="530"
+                y="219"
+                text-anchor="middle"
+                font-size="9"
+                fill="var(--accent-warm)"
+              >
+                never restored by cache
+              </text>
+
+              <line
+                x1="530"
+                y1="224"
+                x2="530"
+                y2="238"
+                stroke="var(--accent-warm)"
+                stroke-width="1.5"
+                marker-end="url(#arrow8warn)"
+              />
+              <rect
+                x="400"
+                y="240"
+                width="260"
+                height="34"
+                rx="5"
+                fill="none"
+                stroke="var(--accent-warm)"
+              />
+              <text
+                x="530"
+                y="262"
+                text-anchor="middle"
+                font-size="10"
+                fill="var(--accent-warm)"
+                font-weight="600"
+              >
+                linker: library not found
+              </text>
+            </svg>
+            <figcaption>
+              Same fingerprint, two outcomes: the step that never links stays
+              green forever, while the step that does link fails the instant the
+              cached fingerprint and the actual cached files disagree.
+            </figcaption>
+          </figure>
+
+          <p>
+            The fix mirrors the earlier model-integrity bug on this same page:
+            don't let "the file already exists" stand in for "the file is
+            actually correct." <code>Swatinem/rust-cache</code> was told to
+            explicitly persist <code>target/sherpa-onnx-prebuilt</code>
+            alongside its usual cache, and a new step now runs
+            <code>cargo clean -p sherpa-onnx-sys</code> right after cache
+            restore on every run — clearing just that crate's fingerprint so
+            Cargo always reruns its build script instead of trusting a
+            possibly-stale one. The build script's own directory check keeps
+            this cheap: it only re-downloads over the network if the library
+            directory is genuinely missing, so a warm cache stays fast while a
+            poisoned one can no longer silently pass as good.
+          </p>
+
+          <aside class="lesson">
+            <strong>Lesson.</strong> A cache is really two things that have to
+            agree: the record that says "this was already done" and the actual
+            output that record refers to. Caching infrastructure built for one
+            kind of build artifact can restore the record without the output
+            when a build script writes somewhere unusual — and the failure that
+            produces looks nothing like a caching bug from the outside.
+          </aside>
+        </article>
+
         <article class="entry" id="entry-2026-08-17-corrupted-model">
           <div class="entry-head">
             <time datetime="2026-08-17">2026-08-17</time>
@@ -1153,7 +1504,7 @@
           >Fairy — bug write-ups, kept separate from
           <a href="index.html">Fairy, Explained</a></span
         >
-        <span>Last updated 2026-08-17</span>
+        <span>Last updated 2026-08-19</span>
       </footer>
     </div>
   </body>
