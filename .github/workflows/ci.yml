@@ -56,4 +56,16 @@ jobs:
 
       - name: Test
         working-directory: src-tauri
-        run: cargo test
+        shell: pwsh
+        run: |
+          cargo test 2>&1 | Tee-Object -FilePath $env:RUNNER_TEMP\test_output.log
+          exit $LASTEXITCODE
+
+      - name: Publish test output on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Backend cargo test output"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
+          Get-Content $env:RUNNER_TEMP\test_output.log | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
