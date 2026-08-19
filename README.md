@@ -73,3 +73,9 @@ Produces an MSI and an NSIS installer under `src-tauri/target/release/bundle/`
   are licensed **OpenRAIL-M**, not MIT; see `docs/VOICE_SPEC.md`'s "Open
   risks" section for details before redistributing a build with Voice
   enabled.
+
+## License
+
+Fairy's own source is [MIT-licensed](LICENSE). The downloaded voice model's
+weights are separately licensed under OpenRAIL-M — see the Notes section
+above.
