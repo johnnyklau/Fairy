@@ -58,6 +58,17 @@ jobs:
           # in sync with the fingerprint that references it.
           cache-directories: src-tauri/target/sherpa-onnx-prebuilt
 
+      - name: Force sherpa-onnx-sys to re-verify its native libs
+        # Belt-and-suspenders for the fingerprint/directory desync
+        # described above: clearing just this crate's build fingerprint
+        # makes Cargo always rerun its build.rs, which itself only
+        # re-downloads if target/sherpa-onnx-prebuilt is actually missing
+        # -- so this stays cheap (no network call) once that directory is
+        # warm from cache, while guaranteeing the two can never drift out
+        # of sync again even if rust-cache's own caching behavior changes.
+        working-directory: src-tauri
+        run: cargo clean -p sherpa-onnx-sys
+
       - name: Format check
         working-directory: src-tauri
         run: cargo fmt --check
