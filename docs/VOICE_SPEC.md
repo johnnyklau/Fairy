@@ -621,7 +621,7 @@ Mirror the project's existing rigor (27 Rust tests, 20 frontend tests as of
    blocking, just means the [Voice selection](#voice-selection) section
    above is the source of truth, not an external voice manifest.
 2. **RESOLVED (checked directly against `supertone-inc/supertonic`):**
-   Supertonic 3's *sample/inference code* is MIT, but the **model weights**
+   Supertonic 3's _sample/inference code_ is MIT, but the **model weights**
    — the `.tar.bz2` this app downloads and installs into every user's app
    data dir — are licensed **OpenRAIL-M**, not MIT. OpenRAIL-M is a
    Responsible-AI license: permissive for the ordinary use case here

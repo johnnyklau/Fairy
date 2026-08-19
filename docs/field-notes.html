@@ -1,597 +1,1160 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Fairy Field Notes</title>
-<meta name="description" content="A running log of Fairy bugs where the real cause turned out to live a few layers away from the symptom.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%9B%3C/text%3E%3C/svg%3E">
-<style>
-  :root {
-    --bg: #f6f4ef;
-    --surface: #fffdf9;
-    --surface-2: #ece6d8;
-    --ink: #201f2b;
-    --ink-dim: #5c5870;
-    --accent: #6a54d6;
-    --accent-warm: #a8471c;
-    --line: #ddd6c6;
-    --shadow: 106 84 214;
-
-    --font-display: Constantia, Georgia, "Iowan Old Style", serif;
-    --font-body: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
-    --font-mono: "Cascadia Code", Consolas, "SFMono-Regular", ui-monospace, monospace;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #131320;
-      --surface: #1a1929;
-      --surface-2: #242236;
-      --ink: #eae7f2;
-      --ink-dim: #a29fc0;
-      --accent: #a996ff;
-      --accent-warm: #ff9d5c;
-      --line: #2d2b42;
-      --shadow: 0 0 0;
-    }
-  }
-
-  :root[data-theme="dark"] {
-    --bg: #131320;
-    --surface: #1a1929;
-    --surface-2: #242236;
-    --ink: #eae7f2;
-    --ink-dim: #a29fc0;
-    --accent: #a996ff;
-    --accent-warm: #ff9d5c;
-    --line: #2d2b42;
-    --shadow: 0 0 0;
-  }
-
-  * { box-sizing: border-box; }
-
-  body {
-    background: var(--bg);
-    color: var(--ink);
-    font-family: var(--font-body);
-    font-size: 17px;
-    line-height: 1.65;
-    margin: 0;
-    padding: 4rem 1.5rem 6rem;
-  }
-
-  .page {
-    max-width: 760px;
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 3rem;
-  }
-
-  header.hero {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding-bottom: 2rem;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .eyebrow {
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--accent-warm);
-  }
-
-  h1 {
-    font-family: var(--font-display);
-    font-weight: 400;
-    font-size: clamp(2.1rem, 5vw, 2.9rem);
-    line-height: 1.15;
-    margin: 0;
-    text-wrap: balance;
-  }
-
-  .dek {
-    font-size: 1.1rem;
-    color: var(--ink-dim);
-    max-width: 60ch;
-    text-wrap: pretty;
-  }
-
-  .dek strong { color: var(--ink); font-weight: 600; }
-
-  .stats {
-    display: flex;
-    gap: 1.5rem;
-    flex-wrap: wrap;
-  }
-
-  .stat {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-  }
-
-  .stat .n {
-    font-family: var(--font-mono);
-    font-size: 1.4rem;
-    color: var(--accent-warm);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .stat .label {
-    font-size: 0.78rem;
-    letter-spacing: 0.04em;
-    color: var(--ink-dim);
-    text-transform: uppercase;
-  }
-
-  main {
-    display: flex;
-    flex-direction: column;
-    gap: 3rem;
-  }
-
-  article.entry {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding-top: 0.5rem;
-    border-top: 1px solid var(--line);
-  }
-
-  article.entry:first-of-type { border-top: none; padding-top: 0; }
-
-  .entry-head {
-    display: flex;
-    align-items: baseline;
-    gap: 0.9rem;
-    flex-wrap: wrap;
-  }
-
-  time {
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    color: var(--accent-warm);
-    font-variant-numeric: tabular-nums;
-  }
-
-  h2 {
-    font-family: var(--font-display);
-    font-weight: 400;
-    font-size: 1.5rem;
-    margin: 0;
-    text-wrap: balance;
-  }
-
-  .tags {
-    display: flex;
-    gap: 0.4rem;
-    flex-wrap: wrap;
-  }
-
-  .tag {
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--ink-dim);
-    border: 1px solid var(--line);
-    border-radius: 3px;
-    padding: 0.15em 0.5em;
-  }
-
-  .facts {
-    display: grid;
-    grid-template-columns: 6.5rem 1fr;
-    gap: 0.5rem 1rem;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 1rem 1.15rem;
-  }
-
-  .facts dt {
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--ink-dim);
-    padding-top: 0.15rem;
-  }
-
-  .facts dd {
-    margin: 0;
-    max-width: 58ch;
-  }
-
-  p { margin: 0; max-width: 66ch; }
-
-  a { color: var(--accent-warm); }
-  a:hover { text-decoration-thickness: 2px; }
-  footer a { color: inherit; text-decoration-color: var(--line); }
-  footer a:hover { color: var(--accent-warm); }
-
-  code {
-    font-family: var(--font-mono);
-    font-size: 0.86em;
-    background: var(--surface-2);
-    border: 1px solid var(--line);
-    border-radius: 3px;
-    padding: 0.1em 0.4em;
-    white-space: nowrap;
-  }
-
-  figure {
-    margin: 0.25rem 0 0;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 1.25rem 1rem 1rem;
-    box-shadow: 0 0 0 1px rgb(var(--shadow) / 0.04), 0 8px 24px -18px rgb(var(--shadow) / 0.5);
-    overflow-x: auto;
-  }
-
-  figure svg { display: block; width: 100%; height: auto; min-width: 480px; }
-
-  .diagram-text { font-family: var(--font-mono); }
-
-  figcaption {
-    margin-top: 0.75rem;
-    font-size: 0.85rem;
-    color: var(--ink-dim);
-    border-top: 1px solid var(--line);
-    padding-top: 0.6rem;
-  }
-
-  aside.lesson {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-left: 3px solid var(--accent);
-    border-radius: 3px;
-    padding: 0.9rem 1.1rem;
-    font-size: 0.95rem;
-    color: var(--ink-dim);
-    max-width: 66ch;
-  }
-
-  aside.lesson strong { color: var(--ink); }
-
-  .placeholder {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    padding: 1.5rem;
-    border: 1px dashed var(--line);
-    border-radius: 6px;
-    color: var(--ink-dim);
-    font-size: 0.92rem;
-  }
-
-  footer {
-    border-top: 1px solid var(--line);
-    padding-top: 1.5rem;
-    font-size: 0.85rem;
-    color: var(--ink-dim);
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    * { transition: none !important; }
-  }
-
-  @media (max-width: 640px) {
-    .facts { grid-template-columns: 1fr; }
-    .facts dt { padding-top: 0.6rem; }
-  }
-</style>
-</head>
-<body>
-<div class="page">
-
-<header class="hero">
-  <span class="eyebrow">Bugs worth remembering</span>
-  <h1>Fairy Field Notes</h1>
-  <p class="dek">
-    A running log of the debugging sessions that taught me something about how Fairy
-    actually behaves — not a full changelog, just the entries where the real cause was
-    a few layers away from the symptom. See <a href="index.html">Fairy, Explained</a> for
-    the architecture these bugs live in.
-  </p>
-  <div class="stats">
-    <div class="stat"><span class="n">3</span><span class="label">entries</span></div>
-    <div class="stat"><span class="n">v0.2.0</span><span class="label">current version</span></div>
-  </div>
-</header>
-
-<main>
-
-<article class="entry" id="entry-2026-08-17-corrupted-model">
-  <div class="entry-head">
-    <time datetime="2026-08-17">2026-08-17</time>
-    <h2>A corrupted model file crashed the whole app instead of degrading gracefully</h2>
-  </div>
-  <div class="tags">
-    <span class="tag">ffi</span>
-    <span class="tag">onnx</span>
-    <span class="tag">data-integrity</span>
-  </div>
-
-  <dl class="facts">
-    <dt>Symptom</dt>
-    <dd>On a completely fresh reinstall, the eye rendered fine — then the whole app
-    vanished the instant it was clicked.</dd>
-    <dt>Looked like</dt>
-    <dd>The reinstall itself, or the auto-update feature that had just been added and
-    tested that same day.</dd>
-    <dt>Actually was</dt>
-    <dd>One model file (<code>vector_estimator.int8.onnx</code>) silently truncated on
-    disk since <em>weeks</em> earlier — undetected the whole time because every voice
-    test since then happened to hit a warm disk cache and never actually reload it.</dd>
-    <dt>Fix</dt>
-    <dd><code>is_model_ready()</code> now checks each file's size against a manifest
-    recorded at download time, not just that the file exists.</dd>
-  </dl>
-
-  <p>
-    Both obvious suspects were ruled out fast: an A/B build from before the reinstall
-    and before the auto-update feature existed crashed identically, and the crash
-    reproduced on an already-settled, minutes-old process — not just right at launch.
-    That left the model itself. A directory listing showed it immediately: six of the
-    seven model files shared one timestamp from the original download; the seventh was
-    dated weeks later and ~2MB smaller than a freshly redownloaded copy turned out to
-    be. Something had overwritten just that one file, incompletely, long ago.
-  </p>
-  <p>
-    The reason nobody had seen this coming: <code>synthesize()</code> checks an
-    in-memory and on-disk cache <em>before</em> ever touching the model, keyed by a hash
-    of the exact text. Every earlier "voice works" confirmation — including several
-    earlier the same day — had been a cache hit, serving bytes synthesized long before
-    the corruption happened. The corrupted file only mattered the moment something asked
-    for a line that had never been cached, which turned out not to happen for weeks.
-  </p>
-  <p>
-    When it finally did, <code>OfflineTts::create</code> tried to parse the truncated
-    file and ONNX Runtime threw a C++ exception. That exception tried to unwind across
-    the Rust/FFI boundary, and Rust's runtime did exactly what it's designed to do with
-    a foreign exception it can't safely catch: it hard-aborted the entire process,
-    printing <code>fatal runtime error: Rust cannot catch foreign exceptions,
-    aborting</code>. No amount of <code>catch_unwind</code> on the Rust side would have
-    helped — this is the same fundamental limit as the eager-load crash further up this
-    page, just reached through a different door.
-  </p>
-
-  <figure>
-    <svg viewBox="0 0 700 280" role="img" aria-label="Every synthesize call checks a cache first. A cache hit — the path every earlier test happened to take — returns bytes instantly and never touches the model. A cache miss calls into OfflineTts::create, which on a corrupted file throws a C++ exception that Rust cannot safely catch, aborting the whole process.">
-      <defs>
-        <marker id="arrow7" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
-        </marker>
-        <marker id="arrow7warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="var(--accent-warm)"/>
-        </marker>
-      </defs>
-
-      <rect x="10" y="100" width="100" height="42" rx="5" fill="none" stroke="currentColor"/>
-      <text x="60" y="125" text-anchor="middle" font-size="11" fill="currentColor">click eye</text>
-
-      <rect x="150" y="100" width="120" height="42" rx="5" fill="none" stroke="currentColor"/>
-      <text x="210" y="121" text-anchor="middle" font-size="10.5" fill="currentColor">cache lookup</text>
-      <text x="210" y="135" text-anchor="middle" font-size="9" fill="currentColor" fill-opacity="0.6">hash(model+lang+text)</text>
-
-      <line x1="110" y1="121" x2="146" y2="121" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow7)"/>
-
-      <line x1="270" y1="112" x2="330" y2="55" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow7)"/>
-      <text x="300" y="80" text-anchor="middle" font-size="9" class="diagram-text" fill="currentColor">hit — every test</text>
-      <text x="300" y="92" text-anchor="middle" font-size="9" class="diagram-text" fill="currentColor">until today</text>
-
-      <rect x="330" y="20" width="150" height="42" rx="5" fill="none" stroke="currentColor"/>
-      <text x="405" y="41" text-anchor="middle" font-size="10.5" fill="currentColor">cached bytes</text>
-      <text x="405" y="55" text-anchor="middle" font-size="9" fill="currentColor" fill-opacity="0.6">model never touched</text>
-
-      <line x1="480" y1="41" x2="530" y2="41" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow7)"/>
-      <rect x="530" y="20" width="120" height="42" rx="5" fill="none" stroke="currentColor"/>
-      <text x="590" y="46" text-anchor="middle" font-size="11" fill="currentColor">speakers</text>
-
-      <line x1="270" y1="130" x2="330" y2="180" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow7)"/>
-      <text x="300" y="155" text-anchor="middle" font-size="9" class="diagram-text" fill="currentColor">miss — first time</text>
-      <text x="300" y="167" text-anchor="middle" font-size="9" class="diagram-text" fill="currentColor">in weeks</text>
-
-      <rect x="330" y="180" width="170" height="42" rx="5" fill="none" stroke="currentColor"/>
-      <text x="415" y="201" text-anchor="middle" font-size="10.5" fill="currentColor">OfflineTts::create</text>
-      <text x="415" y="215" text-anchor="middle" font-size="9" fill="currentColor" fill-opacity="0.6">sherpa-onnx FFI</text>
-
-      <line x1="500" y1="201" x2="540" y2="201" stroke="var(--accent-warm)" stroke-width="1.5" marker-end="url(#arrow7warn)"/>
-      <rect x="540" y="180" width="150" height="42" rx="5" fill="none" stroke="var(--accent-warm)"/>
-      <text x="615" y="201" text-anchor="middle" font-size="10.5" fill="var(--accent-warm)">C++ throws</text>
-      <text x="615" y="215" text-anchor="middle" font-size="9" fill="var(--accent-warm)">truncated file</text>
-
-      <path d="M615,222 L615,232 L470,232 L470,238" fill="none" stroke="var(--accent-warm)" stroke-width="1.5" marker-end="url(#arrow7warn)"/>
-      <rect x="330" y="240" width="220" height="32" rx="5" fill="none" stroke="var(--accent-warm)"/>
-      <text x="440" y="261" text-anchor="middle" font-size="10" fill="var(--accent-warm)">Rust aborts the whole process</text>
-    </svg>
-    <figcaption>
-      Two branches out of the same cache check — one exercised constantly, the other not
-      exercised at all for weeks. The corrupted file only mattered on the branch nobody
-      was taking.
-    </figcaption>
-  </figure>
-
-  <aside class="lesson">
-    <strong>Lesson.</strong> A cache doesn't just speed up the common path — it can quietly
-    stop testing the uncommon one. "It works" only means the path actually taken works;
-    a bug can sit fully formed on a colder path for as long as nothing happens to need it.
-  </aside>
-</article>
-
-<article class="entry" id="entry-2026-08-17-eager-load-crash">
-  <div class="entry-head">
-    <time datetime="2026-08-17">2026-08-17</time>
-    <h2>The installed app crashed on every launch once voice was enabled</h2>
-  </div>
-  <div class="tags">
-    <span class="tag">ffi</span>
-    <span class="tag">startup</span>
-    <span class="tag">onnx</span>
-  </div>
-
-  <dl class="facts">
-    <dt>Symptom</dt>
-    <dd>The installed release build died on launch every time, but only once voice was
-    turned on — dev/debug builds never showed it.</dd>
-    <dt>Looked like</dt>
-    <dd>A bad install or a corrupted binary; the fault offset in the Windows crash log
-    shifted between builds, which pointed away from one fixed line of code.</dd>
-    <dt>Actually was</dt>
-    <dd>The TTS model being loaded eagerly at startup, crossing into <code>sherpa-onnx</code>'s
-    C++ engine while WebView2/window/COM initialization was still settling.</dd>
-    <dt>Fix</dt>
-    <dd>Removed the eager-load call from <code>.setup()</code> entirely — the model now
-    only loads lazily, on the first real synthesis request.</dd>
-  </dl>
-
-  <p>
-    An earlier attempt at a fix wrapped the eager-load call in
-    <code>std::panic::catch_unwind</code>, on the theory that whatever was going wrong was
-    a Rust panic that just needed catching. It wasn't enough — the crash came back with a
-    different fault offset on a later build, which ruled that theory out directly. The
-    reason: a panic that originates on the C++ side of an FFI boundary doesn't unwind into
-    catchable Rust code at all; it triggers a hard process abort (Windows exception
-    <code>0xC0000409</code>) before control ever returns to the Rust frame wrapping the
-    call. <code>catch_unwind</code> can only intercept panics that unwind through Rust —
-    this one never did.
-  </p>
-  <p>
-    Confirmed by direct A/B testing on the same previously-crashing installed binary: with
-    the eager-load call present, it crashed on every launch; with it removed, it launched
-    cleanly and the first reminder still synthesized correctly a little later, right when
-    it was actually needed.
-  </p>
-
-  <aside class="lesson">
-    <strong>Lesson.</strong> A safety net that catches most bugs can create false confidence
-    about the ones it can't reach. FFI boundaries are exactly where that gap shows up — the
-    calling language's usual guarantees stop applying the moment execution crosses into the
-    other side.
-  </aside>
-</article>
-
-<article class="entry" id="entry-2026-08-17-audio-csp">
-  <div class="entry-head">
-    <time datetime="2026-08-17">2026-08-17</time>
-    <h2>Reminder audio was silently blocked by the browser's own security policy</h2>
-  </div>
-  <div class="tags">
-    <span class="tag">webview2</span>
-    <span class="tag">csp</span>
-    <span class="tag">audio</span>
-  </div>
-
-  <dl class="facts">
-    <dt>Symptom</dt>
-    <dd>Clicking the eye showed a popup that vanished almost instantly, with no audio —
-    as if voice were completely broken.</dd>
-    <dt>Looked like</dt>
-    <dd>A backend problem: IPC not reaching Rust, or synthesis failing silently.</dd>
-    <dt>Actually was</dt>
-    <dd>Chromium's Content-Security-Policy blocking a <code>blob:</code> audio load, three
-    components downstream of everything that was actually suspected.</dd>
-    <dt>Fix</dt>
-    <dd>One line in <code>tauri.conf.json</code>: <code>media-src 'self' blob:</code>.</dd>
-  </dl>
-
-  <p>
-    Tracing the click command by command showed it <em>did</em> reach Rust, the model
-    <em>did</em> synthesize real audio, and a correct clip duration <em>did</em> come back
-    over the IPC bridge — every layer that looked suspicious was actually working exactly
-    as designed. The failure was one step further downstream, inside WebView2 itself.
-  </p>
-  <p>
-    Playing audio in the frontend works by wrapping the returned bytes in a
-    <code>blob:</code> URL and handing it to an <code>&lt;audio&gt;</code> element — but
-    Fairy's CSP only listed <code>default-src 'self'</code>, with no explicit rule for
-    media. Chromium doesn't let <code>blob:</code> audio quietly inherit that default; it
-    needs its own permission. So the browser itself refused to load the clip,
-    <code>audio.play()</code> rejected immediately, and Fairy's own error handling (built
-    to fail quietly rather than crash the UI) dismissed the popup right on schedule.
-    Nothing in Rust, IPC, or the voice pipeline was ever at fault.
-  </p>
-
-  <figure>
-    <svg viewBox="0 0 660 250" role="img" aria-label="Sequence showing a click succeeding all the way through the backend and returning real audio, then the browser's own content security policy blocking the blob URL from loading, which causes playback to fail and the popup to dismiss immediately.">
-      <defs>
-        <marker id="arrow6" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
-        </marker>
-        <marker id="arrow6warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="var(--accent-warm)"/>
-        </marker>
-      </defs>
-
-      <rect x="10" y="20" width="100" height="40" rx="5" fill="none" stroke="currentColor"/>
-      <text x="60" y="44" text-anchor="middle" font-size="11" fill="currentColor">click eye</text>
-
-      <rect x="160" y="20" width="120" height="40" rx="5" fill="none" stroke="currentColor"/>
-      <text x="220" y="44" text-anchor="middle" font-size="10.5" fill="currentColor">Rust synthesizes</text>
-
-      <rect x="330" y="20" width="140" height="40" rx="5" fill="none" stroke="currentColor"/>
-      <text x="400" y="38" text-anchor="middle" font-size="10.5" fill="currentColor">audio bytes ✓</text>
-      <text x="400" y="52" text-anchor="middle" font-size="9" fill="currentColor" fill-opacity="0.6">correct, on time</text>
-
-      <rect x="520" y="20" width="120" height="40" rx="5" fill="none" stroke="currentColor"/>
-      <text x="580" y="44" text-anchor="middle" font-size="10.5" fill="currentColor">new Audio(blob:)</text>
-
-      <line x1="110" y1="40" x2="154" y2="40" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow6)"/>
-      <line x1="280" y1="40" x2="324" y2="40" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow6)"/>
-      <line x1="470" y1="40" x2="514" y2="40" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow6)"/>
-
-      <rect x="520" y="110" width="120" height="46" rx="5" fill="none" stroke="var(--accent-warm)"/>
-      <text x="580" y="130" text-anchor="middle" font-size="10.5" fill="var(--accent-warm)">CSP check</text>
-      <text x="580" y="144" text-anchor="middle" font-size="9" fill="var(--accent-warm)">no media-src rule</text>
-
-      <line x1="580" y1="60" x2="580" y2="104" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow6)"/>
-
-      <line x1="558" y1="156" x2="530" y2="184" stroke="var(--accent-warm)" stroke-width="2"/>
-      <line x1="536" y1="164" x2="562" y2="184" stroke="var(--accent-warm)" stroke-width="2"/>
-      <text x="580" y="176" text-anchor="middle" font-size="9.5" fill="var(--accent-warm)" font-weight="600">blocked</text>
-
-      <rect x="330" y="188" width="220" height="46" rx="5" fill="none" stroke="var(--accent-warm)"/>
-      <text x="440" y="207" text-anchor="middle" font-size="10.5" fill="var(--accent-warm)">play() rejects</text>
-      <text x="440" y="221" text-anchor="middle" font-size="9.5" fill="var(--accent-warm)">→ popup dismissed instantly</text>
-
-      <line x1="546" y1="188" x2="500" y2="188" stroke="var(--accent-warm)" stroke-width="1.5" marker-end="url(#arrow6warn)"/>
-    </svg>
-    <figcaption>
-      Everything left of the break executed correctly — the failure was the browser's own
-      gatekeeper, three components later than where the bug first appeared to live.
-    </figcaption>
-  </figure>
-
-  <aside class="lesson">
-    <strong>Lesson.</strong> In a two-runtime app — native backend plus an embedded browser
-    engine — "it doesn't work" can fail at the Rust layer, the IPC bridge, or inside the
-    browser engine itself, and those look identical from the outside. Naming which of the
-    three you're looking at is most of the debugging work.
-  </aside>
-</article>
-
-<div class="placeholder">
-  Next entry lands here after the next notable bug.
-</div>
-
-</main>
-
-<footer>
-  <span>Fairy — bug write-ups, kept separate from <a href="index.html">Fairy, Explained</a></span>
-  <span>Last updated 2026-08-17</span>
-</footer>
-
-</div>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fairy Field Notes</title>
+    <meta
+      name="description"
+      content="A running log of Fairy bugs where the real cause turned out to live a few layers away from the symptom."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%9B%3C/text%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --bg: #f6f4ef;
+        --surface: #fffdf9;
+        --surface-2: #ece6d8;
+        --ink: #201f2b;
+        --ink-dim: #5c5870;
+        --accent: #6a54d6;
+        --accent-warm: #a8471c;
+        --line: #ddd6c6;
+        --shadow: 106 84 214;
+
+        --font-display: Constantia, Georgia, "Iowan Old Style", serif;
+        --font-body:
+          "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+        --font-mono:
+          "Cascadia Code", Consolas, "SFMono-Regular", ui-monospace, monospace;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --bg: #131320;
+          --surface: #1a1929;
+          --surface-2: #242236;
+          --ink: #eae7f2;
+          --ink-dim: #a29fc0;
+          --accent: #a996ff;
+          --accent-warm: #ff9d5c;
+          --line: #2d2b42;
+          --shadow: 0 0 0;
+        }
+      }
+
+      :root[data-theme="dark"] {
+        --bg: #131320;
+        --surface: #1a1929;
+        --surface-2: #242236;
+        --ink: #eae7f2;
+        --ink-dim: #a29fc0;
+        --accent: #a996ff;
+        --accent-warm: #ff9d5c;
+        --line: #2d2b42;
+        --shadow: 0 0 0;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        background: var(--bg);
+        color: var(--ink);
+        font-family: var(--font-body);
+        font-size: 17px;
+        line-height: 1.65;
+        margin: 0;
+        padding: 4rem 1.5rem 6rem;
+      }
+
+      .page {
+        max-width: 760px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 3rem;
+      }
+
+      header.hero {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        padding-bottom: 2rem;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .eyebrow {
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--accent-warm);
+      }
+
+      h1 {
+        font-family: var(--font-display);
+        font-weight: 400;
+        font-size: clamp(2.1rem, 5vw, 2.9rem);
+        line-height: 1.15;
+        margin: 0;
+        text-wrap: balance;
+      }
+
+      .dek {
+        font-size: 1.1rem;
+        color: var(--ink-dim);
+        max-width: 60ch;
+        text-wrap: pretty;
+      }
+
+      .dek strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .stats {
+        display: flex;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+      }
+
+      .stat {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+      }
+
+      .stat .n {
+        font-family: var(--font-mono);
+        font-size: 1.4rem;
+        color: var(--accent-warm);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .stat .label {
+        font-size: 0.78rem;
+        letter-spacing: 0.04em;
+        color: var(--ink-dim);
+        text-transform: uppercase;
+      }
+
+      main {
+        display: flex;
+        flex-direction: column;
+        gap: 3rem;
+      }
+
+      article.entry {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        padding-top: 0.5rem;
+        border-top: 1px solid var(--line);
+      }
+
+      article.entry:first-of-type {
+        border-top: none;
+        padding-top: 0;
+      }
+
+      .entry-head {
+        display: flex;
+        align-items: baseline;
+        gap: 0.9rem;
+        flex-wrap: wrap;
+      }
+
+      time {
+        font-family: var(--font-mono);
+        font-size: 0.82rem;
+        color: var(--accent-warm);
+        font-variant-numeric: tabular-nums;
+      }
+
+      h2 {
+        font-family: var(--font-display);
+        font-weight: 400;
+        font-size: 1.5rem;
+        margin: 0;
+        text-wrap: balance;
+      }
+
+      .tags {
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+      }
+
+      .tag {
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--ink-dim);
+        border: 1px solid var(--line);
+        border-radius: 3px;
+        padding: 0.15em 0.5em;
+      }
+
+      .facts {
+        display: grid;
+        grid-template-columns: 6.5rem 1fr;
+        gap: 0.5rem 1rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 1rem 1.15rem;
+      }
+
+      .facts dt {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--ink-dim);
+        padding-top: 0.15rem;
+      }
+
+      .facts dd {
+        margin: 0;
+        max-width: 58ch;
+      }
+
+      p {
+        margin: 0;
+        max-width: 66ch;
+      }
+
+      a {
+        color: var(--accent-warm);
+      }
+      a:hover {
+        text-decoration-thickness: 2px;
+      }
+      footer a {
+        color: inherit;
+        text-decoration-color: var(--line);
+      }
+      footer a:hover {
+        color: var(--accent-warm);
+      }
+
+      code {
+        font-family: var(--font-mono);
+        font-size: 0.86em;
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: 3px;
+        padding: 0.1em 0.4em;
+        white-space: nowrap;
+      }
+
+      figure {
+        margin: 0.25rem 0 0;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 1.25rem 1rem 1rem;
+        box-shadow:
+          0 0 0 1px rgb(var(--shadow) / 0.04),
+          0 8px 24px -18px rgb(var(--shadow) / 0.5);
+        overflow-x: auto;
+      }
+
+      figure svg {
+        display: block;
+        width: 100%;
+        height: auto;
+        min-width: 480px;
+      }
+
+      .diagram-text {
+        font-family: var(--font-mono);
+      }
+
+      figcaption {
+        margin-top: 0.75rem;
+        font-size: 0.85rem;
+        color: var(--ink-dim);
+        border-top: 1px solid var(--line);
+        padding-top: 0.6rem;
+      }
+
+      aside.lesson {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--accent);
+        border-radius: 3px;
+        padding: 0.9rem 1.1rem;
+        font-size: 0.95rem;
+        color: var(--ink-dim);
+        max-width: 66ch;
+      }
+
+      aside.lesson strong {
+        color: var(--ink);
+      }
+
+      .placeholder {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        padding: 1.5rem;
+        border: 1px dashed var(--line);
+        border-radius: 6px;
+        color: var(--ink-dim);
+        font-size: 0.92rem;
+      }
+
+      footer {
+        border-top: 1px solid var(--line);
+        padding-top: 1.5rem;
+        font-size: 0.85rem;
+        color: var(--ink-dim);
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .facts {
+          grid-template-columns: 1fr;
+        }
+        .facts dt {
+          padding-top: 0.6rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <span class="eyebrow">Bugs worth remembering</span>
+        <h1>Fairy Field Notes</h1>
+        <p class="dek">
+          A running log of the debugging sessions that taught me something about
+          how Fairy actually behaves — not a full changelog, just the entries
+          where the real cause was a few layers away from the symptom. See
+          <a href="index.html">Fairy, Explained</a> for the architecture these
+          bugs live in.
+        </p>
+        <div class="stats">
+          <div class="stat">
+            <span class="n">3</span><span class="label">entries</span>
+          </div>
+          <div class="stat">
+            <span class="n">v0.2.0</span
+            ><span class="label">current version</span>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <article class="entry" id="entry-2026-08-17-corrupted-model">
+          <div class="entry-head">
+            <time datetime="2026-08-17">2026-08-17</time>
+            <h2>
+              A corrupted model file crashed the whole app instead of degrading
+              gracefully
+            </h2>
+          </div>
+          <div class="tags">
+            <span class="tag">ffi</span>
+            <span class="tag">onnx</span>
+            <span class="tag">data-integrity</span>
+          </div>
+
+          <dl class="facts">
+            <dt>Symptom</dt>
+            <dd>
+              On a completely fresh reinstall, the eye rendered fine — then the
+              whole app vanished the instant it was clicked.
+            </dd>
+            <dt>Looked like</dt>
+            <dd>
+              The reinstall itself, or the auto-update feature that had just
+              been added and tested that same day.
+            </dd>
+            <dt>Actually was</dt>
+            <dd>
+              One model file (<code>vector_estimator.int8.onnx</code>) silently
+              truncated on disk since <em>weeks</em> earlier — undetected the
+              whole time because every voice test since then happened to hit a
+              warm disk cache and never actually reload it.
+            </dd>
+            <dt>Fix</dt>
+            <dd>
+              <code>is_model_ready()</code> now checks each file's size against
+              a manifest recorded at download time, not just that the file
+              exists.
+            </dd>
+          </dl>
+
+          <p>
+            Both obvious suspects were ruled out fast: an A/B build from before
+            the reinstall and before the auto-update feature existed crashed
+            identically, and the crash reproduced on an already-settled,
+            minutes-old process — not just right at launch. That left the model
+            itself. A directory listing showed it immediately: six of the seven
+            model files shared one timestamp from the original download; the
+            seventh was dated weeks later and ~2MB smaller than a freshly
+            redownloaded copy turned out to be. Something had overwritten just
+            that one file, incompletely, long ago.
+          </p>
+          <p>
+            The reason nobody had seen this coming:
+            <code>synthesize()</code> checks an in-memory and on-disk cache
+            <em>before</em> ever touching the model, keyed by a hash of the
+            exact text. Every earlier "voice works" confirmation — including
+            several earlier the same day — had been a cache hit, serving bytes
+            synthesized long before the corruption happened. The corrupted file
+            only mattered the moment something asked for a line that had never
+            been cached, which turned out not to happen for weeks.
+          </p>
+          <p>
+            When it finally did, <code>OfflineTts::create</code> tried to parse
+            the truncated file and ONNX Runtime threw a C++ exception. That
+            exception tried to unwind across the Rust/FFI boundary, and Rust's
+            runtime did exactly what it's designed to do with a foreign
+            exception it can't safely catch: it hard-aborted the entire process,
+            printing
+            <code
+              >fatal runtime error: Rust cannot catch foreign exceptions,
+              aborting</code
+            >. No amount of <code>catch_unwind</code> on the Rust side would
+            have helped — this is the same fundamental limit as the eager-load
+            crash further up this page, just reached through a different door.
+          </p>
+
+          <figure>
+            <svg
+              viewBox="0 0 700 280"
+              role="img"
+              aria-label="Every synthesize call checks a cache first. A cache hit — the path every earlier test happened to take — returns bytes instantly and never touches the model. A cache miss calls into OfflineTts::create, which on a corrupted file throws a C++ exception that Rust cannot safely catch, aborting the whole process."
+            >
+              <defs>
+                <marker
+                  id="arrow7"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+                </marker>
+                <marker
+                  id="arrow7warn"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M0,0 L10,5 L0,10 z" fill="var(--accent-warm)" />
+                </marker>
+              </defs>
+
+              <rect
+                x="10"
+                y="100"
+                width="100"
+                height="42"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="60"
+                y="125"
+                text-anchor="middle"
+                font-size="11"
+                fill="currentColor"
+              >
+                click eye
+              </text>
+
+              <rect
+                x="150"
+                y="100"
+                width="120"
+                height="42"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="210"
+                y="121"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="currentColor"
+              >
+                cache lookup
+              </text>
+              <text
+                x="210"
+                y="135"
+                text-anchor="middle"
+                font-size="9"
+                fill="currentColor"
+                fill-opacity="0.6"
+              >
+                hash(model+lang+text)
+              </text>
+
+              <line
+                x1="110"
+                y1="121"
+                x2="146"
+                y2="121"
+                stroke="currentColor"
+                stroke-width="1.5"
+                marker-end="url(#arrow7)"
+              />
+
+              <line
+                x1="270"
+                y1="112"
+                x2="330"
+                y2="55"
+                stroke="currentColor"
+                stroke-width="1.5"
+                marker-end="url(#arrow7)"
+              />
+              <text
+                x="300"
+                y="80"
+                text-anchor="middle"
+                font-size="9"
+                class="diagram-text"
+                fill="currentColor"
+              >
+                hit — every test
+              </text>
+              <text
+                x="300"
+                y="92"
+                text-anchor="middle"
+                font-size="9"
+                class="diagram-text"
+                fill="currentColor"
+              >
+                until today
+              </text>
+
+              <rect
+                x="330"
+                y="20"
+                width="150"
+                height="42"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="405"
+                y="41"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="currentColor"
+              >
+                cached bytes
+              </text>
+              <text
+                x="405"
+                y="55"
+                text-anchor="middle"
+                font-size="9"
+                fill="currentColor"
+                fill-opacity="0.6"
+              >
+                model never touched
+              </text>
+
+              <line
+                x1="480"
+                y1="41"
+                x2="530"
+                y2="41"
+                stroke="currentColor"
+                stroke-width="1.5"
+                marker-end="url(#arrow7)"
+              />
+              <rect
+                x="530"
+                y="20"
+                width="120"
+                height="42"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="590"
+                y="46"
+                text-anchor="middle"
+                font-size="11"
+                fill="currentColor"
+              >
+                speakers
+              </text>
+
+              <line
+                x1="270"
+                y1="130"
+                x2="330"
+                y2="180"
+                stroke="currentColor"
+                stroke-width="1.5"
+                marker-end="url(#arrow7)"
+              />
+              <text
+                x="300"
+                y="155"
+                text-anchor="middle"
+                font-size="9"
+                class="diagram-text"
+                fill="currentColor"
+              >
+                miss — first time
+              </text>
+              <text
+                x="300"
+                y="167"
+                text-anchor="middle"
+                font-size="9"
+                class="diagram-text"
+                fill="currentColor"
+              >
+                in weeks
+              </text>
+
+              <rect
+                x="330"
+                y="180"
+                width="170"
+                height="42"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="415"
+                y="201"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="currentColor"
+              >
+                OfflineTts::create
+              </text>
+              <text
+                x="415"
+                y="215"
+                text-anchor="middle"
+                font-size="9"
+                fill="currentColor"
+                fill-opacity="0.6"
+              >
+                sherpa-onnx FFI
+              </text>
+
+              <line
+                x1="500"
+                y1="201"
+                x2="540"
+                y2="201"
+                stroke="var(--accent-warm)"
+                stroke-width="1.5"
+                marker-end="url(#arrow7warn)"
+              />
+              <rect
+                x="540"
+                y="180"
+                width="150"
+                height="42"
+                rx="5"
+                fill="none"
+                stroke="var(--accent-warm)"
+              />
+              <text
+                x="615"
+                y="201"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="var(--accent-warm)"
+              >
+                C++ throws
+              </text>
+              <text
+                x="615"
+                y="215"
+                text-anchor="middle"
+                font-size="9"
+                fill="var(--accent-warm)"
+              >
+                truncated file
+              </text>
+
+              <path
+                d="M615,222 L615,232 L470,232 L470,238"
+                fill="none"
+                stroke="var(--accent-warm)"
+                stroke-width="1.5"
+                marker-end="url(#arrow7warn)"
+              />
+              <rect
+                x="330"
+                y="240"
+                width="220"
+                height="32"
+                rx="5"
+                fill="none"
+                stroke="var(--accent-warm)"
+              />
+              <text
+                x="440"
+                y="261"
+                text-anchor="middle"
+                font-size="10"
+                fill="var(--accent-warm)"
+              >
+                Rust aborts the whole process
+              </text>
+            </svg>
+            <figcaption>
+              Two branches out of the same cache check — one exercised
+              constantly, the other not exercised at all for weeks. The
+              corrupted file only mattered on the branch nobody was taking.
+            </figcaption>
+          </figure>
+
+          <aside class="lesson">
+            <strong>Lesson.</strong> A cache doesn't just speed up the common
+            path — it can quietly stop testing the uncommon one. "It works" only
+            means the path actually taken works; a bug can sit fully formed on a
+            colder path for as long as nothing happens to need it.
+          </aside>
+        </article>
+
+        <article class="entry" id="entry-2026-08-17-eager-load-crash">
+          <div class="entry-head">
+            <time datetime="2026-08-17">2026-08-17</time>
+            <h2>
+              The installed app crashed on every launch once voice was enabled
+            </h2>
+          </div>
+          <div class="tags">
+            <span class="tag">ffi</span>
+            <span class="tag">startup</span>
+            <span class="tag">onnx</span>
+          </div>
+
+          <dl class="facts">
+            <dt>Symptom</dt>
+            <dd>
+              The installed release build died on launch every time, but only
+              once voice was turned on — dev/debug builds never showed it.
+            </dd>
+            <dt>Looked like</dt>
+            <dd>
+              A bad install or a corrupted binary; the fault offset in the
+              Windows crash log shifted between builds, which pointed away from
+              one fixed line of code.
+            </dd>
+            <dt>Actually was</dt>
+            <dd>
+              The TTS model being loaded eagerly at startup, crossing into
+              <code>sherpa-onnx</code>'s C++ engine while WebView2/window/COM
+              initialization was still settling.
+            </dd>
+            <dt>Fix</dt>
+            <dd>
+              Removed the eager-load call from <code>.setup()</code> entirely —
+              the model now only loads lazily, on the first real synthesis
+              request.
+            </dd>
+          </dl>
+
+          <p>
+            An earlier attempt at a fix wrapped the eager-load call in
+            <code>std::panic::catch_unwind</code>, on the theory that whatever
+            was going wrong was a Rust panic that just needed catching. It
+            wasn't enough — the crash came back with a different fault offset on
+            a later build, which ruled that theory out directly. The reason: a
+            panic that originates on the C++ side of an FFI boundary doesn't
+            unwind into catchable Rust code at all; it triggers a hard process
+            abort (Windows exception <code>0xC0000409</code>) before control
+            ever returns to the Rust frame wrapping the call.
+            <code>catch_unwind</code> can only intercept panics that unwind
+            through Rust — this one never did.
+          </p>
+          <p>
+            Confirmed by direct A/B testing on the same previously-crashing
+            installed binary: with the eager-load call present, it crashed on
+            every launch; with it removed, it launched cleanly and the first
+            reminder still synthesized correctly a little later, right when it
+            was actually needed.
+          </p>
+
+          <aside class="lesson">
+            <strong>Lesson.</strong> A safety net that catches most bugs can
+            create false confidence about the ones it can't reach. FFI
+            boundaries are exactly where that gap shows up — the calling
+            language's usual guarantees stop applying the moment execution
+            crosses into the other side.
+          </aside>
+        </article>
+
+        <article class="entry" id="entry-2026-08-17-audio-csp">
+          <div class="entry-head">
+            <time datetime="2026-08-17">2026-08-17</time>
+            <h2>
+              Reminder audio was silently blocked by the browser's own security
+              policy
+            </h2>
+          </div>
+          <div class="tags">
+            <span class="tag">webview2</span>
+            <span class="tag">csp</span>
+            <span class="tag">audio</span>
+          </div>
+
+          <dl class="facts">
+            <dt>Symptom</dt>
+            <dd>
+              Clicking the eye showed a popup that vanished almost instantly,
+              with no audio — as if voice were completely broken.
+            </dd>
+            <dt>Looked like</dt>
+            <dd>
+              A backend problem: IPC not reaching Rust, or synthesis failing
+              silently.
+            </dd>
+            <dt>Actually was</dt>
+            <dd>
+              Chromium's Content-Security-Policy blocking a
+              <code>blob:</code> audio load, three components downstream of
+              everything that was actually suspected.
+            </dd>
+            <dt>Fix</dt>
+            <dd>
+              One line in <code>tauri.conf.json</code>:
+              <code>media-src 'self' blob:</code>.
+            </dd>
+          </dl>
+
+          <p>
+            Tracing the click command by command showed it <em>did</em> reach
+            Rust, the model <em>did</em> synthesize real audio, and a correct
+            clip duration <em>did</em> come back over the IPC bridge — every
+            layer that looked suspicious was actually working exactly as
+            designed. The failure was one step further downstream, inside
+            WebView2 itself.
+          </p>
+          <p>
+            Playing audio in the frontend works by wrapping the returned bytes
+            in a
+            <code>blob:</code> URL and handing it to an
+            <code>&lt;audio&gt;</code> element — but Fairy's CSP only listed
+            <code>default-src 'self'</code>, with no explicit rule for media.
+            Chromium doesn't let <code>blob:</code> audio quietly inherit that
+            default; it needs its own permission. So the browser itself refused
+            to load the clip, <code>audio.play()</code> rejected immediately,
+            and Fairy's own error handling (built to fail quietly rather than
+            crash the UI) dismissed the popup right on schedule. Nothing in
+            Rust, IPC, or the voice pipeline was ever at fault.
+          </p>
+
+          <figure>
+            <svg
+              viewBox="0 0 660 250"
+              role="img"
+              aria-label="Sequence showing a click succeeding all the way through the backend and returning real audio, then the browser's own content security policy blocking the blob URL from loading, which causes playback to fail and the popup to dismiss immediately."
+            >
+              <defs>
+                <marker
+                  id="arrow6"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+                </marker>
+                <marker
+                  id="arrow6warn"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M0,0 L10,5 L0,10 z" fill="var(--accent-warm)" />
+                </marker>
+              </defs>
+
+              <rect
+                x="10"
+                y="20"
+                width="100"
+                height="40"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="60"
+                y="44"
+                text-anchor="middle"
+                font-size="11"
+                fill="currentColor"
+              >
+                click eye
+              </text>
+
+              <rect
+                x="160"
+                y="20"
+                width="120"
+                height="40"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="220"
+                y="44"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="currentColor"
+              >
+                Rust synthesizes
+              </text>
+
+              <rect
+                x="330"
+                y="20"
+                width="140"
+                height="40"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="400"
+                y="38"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="currentColor"
+              >
+                audio bytes ✓
+              </text>
+              <text
+                x="400"
+                y="52"
+                text-anchor="middle"
+                font-size="9"
+                fill="currentColor"
+                fill-opacity="0.6"
+              >
+                correct, on time
+              </text>
+
+              <rect
+                x="520"
+                y="20"
+                width="120"
+                height="40"
+                rx="5"
+                fill="none"
+                stroke="currentColor"
+              />
+              <text
+                x="580"
+                y="44"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="currentColor"
+              >
+                new Audio(blob:)
+              </text>
+
+              <line
+                x1="110"
+                y1="40"
+                x2="154"
+                y2="40"
+                stroke="currentColor"
+                stroke-width="1.5"
+                marker-end="url(#arrow6)"
+              />
+              <line
+                x1="280"
+                y1="40"
+                x2="324"
+                y2="40"
+                stroke="currentColor"
+                stroke-width="1.5"
+                marker-end="url(#arrow6)"
+              />
+              <line
+                x1="470"
+                y1="40"
+                x2="514"
+                y2="40"
+                stroke="currentColor"
+                stroke-width="1.5"
+                marker-end="url(#arrow6)"
+              />
+
+              <rect
+                x="520"
+                y="110"
+                width="120"
+                height="46"
+                rx="5"
+                fill="none"
+                stroke="var(--accent-warm)"
+              />
+              <text
+                x="580"
+                y="130"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="var(--accent-warm)"
+              >
+                CSP check
+              </text>
+              <text
+                x="580"
+                y="144"
+                text-anchor="middle"
+                font-size="9"
+                fill="var(--accent-warm)"
+              >
+                no media-src rule
+              </text>
+
+              <line
+                x1="580"
+                y1="60"
+                x2="580"
+                y2="104"
+                stroke="currentColor"
+                stroke-width="1.5"
+                marker-end="url(#arrow6)"
+              />
+
+              <line
+                x1="558"
+                y1="156"
+                x2="530"
+                y2="184"
+                stroke="var(--accent-warm)"
+                stroke-width="2"
+              />
+              <line
+                x1="536"
+                y1="164"
+                x2="562"
+                y2="184"
+                stroke="var(--accent-warm)"
+                stroke-width="2"
+              />
+              <text
+                x="580"
+                y="176"
+                text-anchor="middle"
+                font-size="9.5"
+                fill="var(--accent-warm)"
+                font-weight="600"
+              >
+                blocked
+              </text>
+
+              <rect
+                x="330"
+                y="188"
+                width="220"
+                height="46"
+                rx="5"
+                fill="none"
+                stroke="var(--accent-warm)"
+              />
+              <text
+                x="440"
+                y="207"
+                text-anchor="middle"
+                font-size="10.5"
+                fill="var(--accent-warm)"
+              >
+                play() rejects
+              </text>
+              <text
+                x="440"
+                y="221"
+                text-anchor="middle"
+                font-size="9.5"
+                fill="var(--accent-warm)"
+              >
+                → popup dismissed instantly
+              </text>
+
+              <line
+                x1="546"
+                y1="188"
+                x2="500"
+                y2="188"
+                stroke="var(--accent-warm)"
+                stroke-width="1.5"
+                marker-end="url(#arrow6warn)"
+              />
+            </svg>
+            <figcaption>
+              Everything left of the break executed correctly — the failure was
+              the browser's own gatekeeper, three components later than where
+              the bug first appeared to live.
+            </figcaption>
+          </figure>
+
+          <aside class="lesson">
+            <strong>Lesson.</strong> In a two-runtime app — native backend plus
+            an embedded browser engine — "it doesn't work" can fail at the Rust
+            layer, the IPC bridge, or inside the browser engine itself, and
+            those look identical from the outside. Naming which of the three
+            you're looking at is most of the debugging work.
+          </aside>
+        </article>
+
+        <div class="placeholder">
+          Next entry lands here after the next notable bug.
+        </div>
+      </main>
+
+      <footer>
+        <span
+          >Fairy — bug write-ups, kept separate from
+          <a href="index.html">Fairy, Explained</a></span
+        >
+        <span>Last updated 2026-08-17</span>
+      </footer>
+    </div>
+  </body>
 </html>
